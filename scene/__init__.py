@@ -12,6 +12,7 @@
 import os
 import random
 import json
+from scene.cameras import Camera
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
@@ -86,8 +87,8 @@ class Scene:
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
 
-    def getTrainCameras(self, scale=1.0):
+    def getTrainCameras(self, scale=1.0) -> list[Camera]:
         return self.train_cameras[scale]
 
-    def getTestCameras(self, scale=1.0):
+    def getTestCameras(self, scale=1.0) -> list[Camera]:
         return self.test_cameras[scale]

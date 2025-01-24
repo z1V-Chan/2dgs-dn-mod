@@ -72,3 +72,14 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
+def isotropic_loss(scaling: torch.Tensor) -> torch.Tensor:
+    """
+    Computes loss enforcing isotropic scaling for the 3D Gaussians
+    Args:
+        scaling: scaling tensor of 3D Gaussians of shape (n, 3)
+    Returns:
+        The computed isotropic loss
+    """
+    mean_scaling = scaling.mean(dim=1, keepdim=True)
+    isotropic_diff = torch.abs(scaling - mean_scaling * torch.ones_like(scaling))
+    return isotropic_diff.mean()

@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -12,23 +12,33 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import isotropic_loss, l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import get_expon_lr_func, safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr, render_net_image
+from utils.image_utils import depth_normalize_, psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.point_utils import depth_to_normal
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
+
+def training(
+    dataset: ModelParams,
+    opt: OptimizationParams,
+    pipe: PipelineParams,
+    testing_iterations,
+    saving_iterations,
+    checkpoint_iterations,
+    checkpoint,
+):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -46,6 +56,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
+    ema_depth_for_log = 0.0
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
 
@@ -64,15 +75,66 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
+
+        bg = torch.rand((3), device="cuda") if opt.random_background else background
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        
+
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        
+
+        depth_loss = torch.tensor(0.0, device="cuda")
+
+        # print(iteration)
+        # print(opt.depth_from_iter)
+        if iteration > opt.depth_from_iter:
+            if viewpoint_cam.sensor_depth is not None:
+                gt_depth = viewpoint_cam.sensor_depth.to("cuda", non_blocking=True)
+                rend_depth = render_pkg["surf_depth"]
+                mask = (gt_depth > 0.3) & (gt_depth < 6) & (rend_depth > 0.)
+                # print(mask.shape)
+                # print(depth.shape)
+                # print(gt_depth.shape)
+                # assert False
+                depth_loss_sensor = l1_loss(rend_depth[mask], gt_depth[mask])
+                depth_loss += opt.lambda_depth_sensor * depth_loss_sensor
+                # print(depth.shape)
+                # print(gt_depth.shape)
+                # assert False
+
+            if viewpoint_cam.pred_depth is not None:
+                dn_l1_weight = get_expon_lr_func(opt.dn_l1_weight_init, opt.dn_l1_weight_final, max_steps=opt.iterations)(iteration)
+                pred_depth = viewpoint_cam.pred_depth.to("cuda", non_blocking=True)
+                rend_depth = render_pkg["surf_depth"]
+                mask = rend_depth > 0.
+                # print(mask.shape)
+                # assert False
+                pred_depth_inv_normalize = depth_normalize_(pred_depth[mask])
+                rend_depth_inv_normalize = depth_normalize_(rend_depth[mask])
+                depth_loss_heuristic = l1_loss(pred_depth_inv_normalize, rend_depth_inv_normalize)
+                depth_loss += 10 * dn_l1_weight * depth_loss_heuristic
+
+                if iteration > opt.depth_from_iter + 1000:
+                    rend_depth_normal = render_pkg["surf_normal"]
+                    render_normal = render_pkg["rend_normal"]
+
+                    with torch.no_grad():
+                        pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth).permute(2, 0, 1)
+
+                    # depth_normal_loss = l1_loss(pred_depth_normal, rend_depth_normal)
+                    # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
+                    depth_normal_loss = (1 - (rend_depth_normal * pred_depth_normal).sum(dim=0)).mean()
+                    render_normal_loss = (1 - (render_normal * pred_depth_normal).sum(dim=0)).mean()
+                    depth_loss += dn_l1_weight * (depth_normal_loss + render_normal_loss)
+
+                # isotropic regularization
+                if opt.lambda_isotropic > 0:
+                    reg_loss = isotropic_loss(gaussians.get_scaling)
+                    loss += opt.lambda_isotropic * reg_loss
+
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
@@ -85,8 +147,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         dist_loss = lambda_dist * (rend_dist).mean()
 
         # loss
-        total_loss = loss + dist_loss + normal_loss
-        
+        total_loss = loss + dist_loss + normal_loss + depth_loss
+
         total_loss.backward()
 
         iter_end.record()
@@ -94,13 +156,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            ema_depth_for_log = 0.4 * depth_loss.item() + 0.6 * ema_depth_for_log
             ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
-
 
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
+                    "depth": f"{ema_depth_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"
@@ -121,16 +184,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
-
             # Densification
             if iteration < opt.densify_until_iter:
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                    size_threshold = opt.max_screen_size if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold)
-                
+
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
@@ -166,6 +228,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 except Exception as e:
                     # raise e
                     network_gui.conn = None
+
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -259,17 +322,18 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 10_000, 15_000, 20_000, 25_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
-    print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
+
+    print("Optimizing " + args.model_path)
 
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)

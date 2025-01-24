@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -12,7 +12,7 @@
 import os
 import sys
 from PIL import Image
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
@@ -25,11 +25,13 @@ from scene.gaussian_model import BasicPointCloud
 
 class CameraInfo(NamedTuple):
     uid: int
-    R: np.array
-    T: np.array
-    FovY: np.array
-    FovX: np.array
-    image: np.array
+    R: np.ndarray
+    T: np.ndarray
+    FovY: np.ndarray
+    FovX: np.ndarray
+    image: np.ndarray
+    depth_cam: np.ndarray
+    depth_est: np.ndarray
     image_path: str
     image_name: str
     width: int
@@ -65,8 +67,15 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
-    cam_infos = []
+
+def readColmapCameras(
+    cam_extrinsics,
+    cam_intrinsics,
+    images_folder,
+    depth_cam_folder=None,
+    depth_est_folder=None,
+):
+    cam_infos: list[CameraInfo] = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
         # the exact output you're looking for:
@@ -97,12 +106,21 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
-
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        depth_cam = None
+        if depth_cam_folder is not None:
+            depth_path = os.path.join(depth_cam_folder, os.path.basename(extr.name))
+            depth_cam = Image.open(depth_path)
+        depth_est = None
+        # assert depth_cam is not None, "Depth camera is required for training"
+        if depth_est_folder is not None:
+            depth_path = os.path.join(depth_est_folder, os.path.basename(extr.name))
+            depth_est = Image.open(depth_path)
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth_cam=depth_cam, depth_est=depth_est,
                               image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
+
 
 def fetchPly(path):
     plydata = PlyData.read(path)
@@ -131,18 +149,24 @@ def storePly(path, xyz, rgb):
 
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
+        cameras_extrinsic_file = os.path.join(path, "sparse", "images.bin")
+        cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.bin")
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     except:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
+        cameras_extrinsic_file = os.path.join(path, "sparse", "images.txt")
+        cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    cam_infos_unsorted = readColmapCameras(
+        cam_extrinsics=cam_extrinsics,
+        cam_intrinsics=cam_intrinsics,
+        images_folder=os.path.join(path, reading_dir),
+        depth_cam_folder=os.path.join(path, "depths") if os.path.exists(os.path.join(path, "depths")) else None,
+        depth_est_folder=os.path.join(path, "depths_est") if os.path.exists(os.path.join(path, "depths_est")) else None
+    )
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
@@ -154,9 +178,9 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
-    ply_path = os.path.join(path, "sparse/0/points3D.ply")
-    bin_path = os.path.join(path, "sparse/0/points3D.bin")
-    txt_path = os.path.join(path, "sparse/0/points3D.txt")
+    ply_path = os.path.join(path, "sparse/points3D.ply")
+    bin_path = os.path.join(path, "sparse/points3D.bin")
+    txt_path = os.path.join(path, "sparse/points3D.txt")
     if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
         try:
@@ -254,7 +278,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            ply_path=ply_path)
     return scene_info
 
-sceneLoadTypeCallbacks = {
+sceneLoadTypeCallbacks: dict[str, Callable[..., SceneInfo]] = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo
 }

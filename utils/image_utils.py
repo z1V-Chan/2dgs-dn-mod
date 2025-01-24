@@ -59,3 +59,7 @@ def render_net_image(render_pkg, render_items, render_mode, camera):
     if net_image.shape[0]==1:
         net_image = colormap(net_image)
     return net_image
+
+def depth_normalize_(depth):
+    depth = (depth - torch.min(depth)) / (torch.max(depth) - torch.min(depth))
+    return depth
