@@ -3,20 +3,47 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+from typing import NamedTuple
 import torch
 from torch import nn
 import numpy as np
+from PIL import Image
+from utils.general_utils import FreeImage, PILtoTorch
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
+class GroundTruth(NamedTuple):
+    image: torch.Tensor
+    alpha: torch.Tensor | None
+    depth_cam: torch.Tensor | None
+    depth_est: torch.Tensor | None
+
 class Camera(nn.Module):
-    def __init__(self, colmap_id, R, T, FoVx, FoVy, image, depth_cam, depth_est, gt_alpha_mask,
-                 image_name, uid, trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"):
+
+    preload = False
+
+    def __init__(
+        self,
+        colmap_id,
+        R,
+        T,
+        FoVx,
+        FoVy,
+        resolution,
+        image_path: str,
+        depth_cam_path: str | None,
+        depth_est_path: str | None,
+        image_name,
+        uid,
+        trans=np.array([0.0, 0.0, 0.0]),
+        scale=1.0,
+        data_device="cuda",
+    ):
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -27,45 +54,81 @@ class Camera(nn.Module):
         self.FoVy = FoVy
         self.image_name = image_name
 
-        self.data_device = torch.device("cpu")
+        self.resolution = resolution
 
-        # try:
-        #     self.data_device = torch.device(data_device)
-        # except Exception as e:
-        #     print(e)
-        #     print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
-        #     self.data_device = torch.device("cuda")
+        # self.data_device = torch.device("cpu")
 
-        self.original_image = image.clamp(0.0, 1.0) # move to device at dataloader to reduce VRAM requirement
-        self.sensor_depth = depth_cam.to(self.data_device) if depth_cam is not None else None
-        self.pred_depth = depth_est.to(self.data_device) if depth_est is not None else None
+        self.__original_image = image_path
+        # move to device at dataloader to reduce VRAM requirement
+        self.__sensor_depth = depth_cam_path if depth_cam_path is not None else None
+        self.__pred_depth = depth_est_path if depth_est_path is not None else None
 
+        self.image_width = resolution[0]
+        self.image_height = resolution[1]
 
-        self.image_width = self.original_image.shape[2]
-        self.image_height = self.original_image.shape[1]
+        self._gt = load_image(resolution, image_path, depth_cam_path, depth_est_path) if Camera.preload else None
 
-        if gt_alpha_mask is not None:
-            # self.original_image *= gt_alpha_mask.to(self.data_device)
-            self.gt_alpha_mask = gt_alpha_mask.to(self.data_device)
-        else:
-            # self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device) # do we need this?
-            self.gt_alpha_mask = None
-        
         self.zfar = 100.0
         self.znear = 0.01
 
         self.trans = trans
         self.scale = scale
 
-        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
-        self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
-        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+        self.world_view_transform = (
+            torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+        )
+        self.projection_matrix = (
+            getProjectionMatrix(
+                znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy
+            )
+            .transpose(0, 1)
+            .cuda()
+        )
+        self.full_proj_transform = (
+            self.world_view_transform.unsqueeze(0).bmm(
+                self.projection_matrix.unsqueeze(0)
+            )
+        ).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
 
+    def gt(self, release=True):
+        if self._gt is None:
+            original_image, gt_alpha_mask, sensor_depth, pred_depth = load_image(
+                self.resolution,
+                self.__original_image,
+                self.__sensor_depth,
+                self.__pred_depth,
+            )
+            gt = GroundTruth(
+                original_image,
+                gt_alpha_mask,
+                sensor_depth,
+                pred_depth,
+            )
+        else: 
+            gt = self._gt
+
+        if release:
+            self._gt = None
+        else:
+            self._gt = gt
+
+        return gt
+
 class MiniCam:
-    def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
+    def __init__(
+        self,
+        width,
+        height,
+        fovy,
+        fovx,
+        znear,
+        zfar,
+        world_view_transform,
+        full_proj_transform,
+    ):
         self.image_width = width
-        self.image_height = height    
+        self.image_height = height
         self.FoVy = fovy
         self.FoVx = fovx
         self.znear = znear
@@ -75,3 +138,45 @@ class MiniCam:
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
 
+
+def load_image(
+    resolution,
+    image_path: str,
+    depth_cam_path: str | None = None,
+    depth_est_path: str | None = None,
+):
+    """
+    Load the image and depth maps from the FreeImage objects
+    RAM usage by PIL would be free
+    return Tensor are all in device cpu
+    """
+    image_pil = Image.open(image_path)
+    depth_cam_pil = Image.open(depth_cam_path) if depth_cam_path is not None else None
+    depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
+
+    if len(image_pil.split()) > 3:
+        # assert False, "Image has more than 3 channels, not supported"
+        import torch
+
+        resized_image_rgb = torch.cat(
+            [PILtoTorch(im, resolution) for im in image_pil.split()[:3]], dim=0
+        )
+        loaded_mask = PILtoTorch(image_pil.split()[3], resolution)
+        gt_image = resized_image_rgb
+    else:
+        resized_image_rgb = PILtoTorch(image_pil, resolution)
+        loaded_mask = None
+        gt_image = resized_image_rgb
+
+    resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=1e3) if depth_cam_pil is not None else None
+    resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
+
+    image_pil.close()
+    if depth_cam_pil is not None:
+        depth_cam_pil.close()
+    if depth_est_pil is not None:
+        depth_est_pil.close()
+
+    return GroundTruth(
+        gt_image.clamp(0.0, 1.0), loaded_mask, resized_depth_cam, resized_depth_est
+    )

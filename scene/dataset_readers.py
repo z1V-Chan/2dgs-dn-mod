@@ -15,6 +15,7 @@ from PIL import Image
 from typing import Callable, NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
+from utils.general_utils import FreeImage
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import numpy as np
 import json
@@ -29,9 +30,8 @@ class CameraInfo(NamedTuple):
     T: np.ndarray
     FovY: np.ndarray
     FovX: np.ndarray
-    image: np.ndarray
-    depth_cam: np.ndarray
-    depth_est: np.ndarray
+    depth_cam_path: str
+    depth_est_path: str
     image_path: str
     image_name: str
     width: int
@@ -105,18 +105,29 @@ def readColmapCameras(
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
-        image = Image.open(image_path)
-        depth_cam = None
+
+        depth_cam_path = None
         if depth_cam_folder is not None:
-            depth_path = os.path.join(depth_cam_folder, os.path.basename(extr.name))
-            depth_cam = Image.open(depth_path)
-        depth_est = None
+            depth_cam_path = os.path.join(depth_cam_folder, os.path.basename(extr.name))
+
+        depth_est_path = None
         # assert depth_cam is not None, "Depth camera is required for training"
         if depth_est_folder is not None:
-            depth_path = os.path.join(depth_est_folder, os.path.basename(extr.name))
-            depth_est = Image.open(depth_path)
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth_cam=depth_cam, depth_est=depth_est,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+            depth_est_path = os.path.join(depth_est_folder, os.path.basename(extr.name))
+
+        cam_info = CameraInfo(
+            uid=uid,
+            R=R,
+            T=T,
+            FovY=FovY,
+            FovX=FovX,
+            depth_cam_path=depth_cam_path,
+            depth_est_path=depth_est_path,
+            image_path=image_path,
+            image_name=image_name,
+            width=width,
+            height=height,
+        )
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -127,7 +138,10 @@ def fetchPly(path):
     vertices = plydata['vertex']
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    if "nx" in vertices.data.dtype.names:
+        normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    else:
+        normals = np.zeros_like(positions)
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 def storePly(path, xyz, rgb):
@@ -183,15 +197,21 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     txt_path = os.path.join(path, "sparse/points3D.txt")
     if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
-        try:
+        if os.path.exists(bin_path):
             xyz, rgb, _ = read_points3D_binary(bin_path)
-        except:
+        elif os.path.exists(txt_path):
             xyz, rgb, _ = read_points3D_text(txt_path)
+        else: # random generate
+            num_pts = 100_000
+            print(f"Generating random point cloud ({num_pts})...")
+            xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+            shs = np.random.random((num_pts, 3)) / 255.0
+            rgb = SH2RGB(shs) * 255
         storePly(ply_path, xyz, rgb)
-    try:
-        pcd = fetchPly(ply_path)
-    except:
-        pcd = None
+    # try:
+    pcd = fetchPly(ply_path)
+    # except Exception as e:
+    #     pcd = None
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,

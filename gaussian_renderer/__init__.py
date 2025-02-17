@@ -12,11 +12,12 @@
 import torch
 import math
 from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from scene.cameras import Camera
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
     Render the scene. 
     
@@ -148,10 +149,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
 
     rets.update({
-            'rend_alpha': render_alpha,
-            'rend_normal': render_normal,
-            'rend_dist': render_dist,
-            'surf_depth': surf_depth,
+            'render_alpha': render_alpha,
+            'render_normal': render_normal,
+            'render_dist': render_dist,
+            'render_depth': surf_depth,
             'surf_normal': surf_normal,
     })
 

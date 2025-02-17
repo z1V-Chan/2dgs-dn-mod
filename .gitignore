@@ -12,5 +12,5 @@ data
 eval
 *.npz
 **/tmp
-
+**/*.so
 submodules

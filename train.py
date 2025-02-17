@@ -79,9 +79,16 @@ def training(
         bg = torch.rand((3), device="cuda") if opt.random_background else background
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
-        gt_image = viewpoint_cam.original_image.to(device="cuda", non_blocking=True)
+        gt = viewpoint_cam.gt(release=False)
+
+        gt_image = gt.image.to(device="cuda", non_blocking=True)
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        viewspace_point_tensor, visibility_filter, radii = render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        image: torch.Tensor = render_pkg["render"] # [3, H, W]
+        rend_depth: torch.Tensor = render_pkg["render_depth"] # [1, H, W]
+        rend_normal: torch.Tensor = render_pkg['render_normal'] # [3, H, W]
+        surf_normal: torch.Tensor = render_pkg['surf_normal'] # [3, H, W]
+        rend_dist: torch.Tensor = render_pkg["render_dist"] # [1, H, W]
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
@@ -91,9 +98,8 @@ def training(
         # print(iteration)
         # print(opt.depth_from_iter)
         if iteration > opt.depth_from_iter:
-            if viewpoint_cam.sensor_depth is not None:
-                gt_depth = viewpoint_cam.sensor_depth.to("cuda", non_blocking=True)
-                rend_depth = render_pkg["surf_depth"]
+            if gt.depth_cam is not None:
+                gt_depth = gt.depth_cam.to("cuda", non_blocking=True)
                 mask = (gt_depth > 0.3) & (gt_depth < 6) & (rend_depth > 0.)
                 # print(mask.shape)
                 # print(depth.shape)
@@ -105,29 +111,25 @@ def training(
                 # print(gt_depth.shape)
                 # assert False
 
-            if viewpoint_cam.pred_depth is not None:
+            if gt.depth_est is not None:
                 dn_l1_weight = get_expon_lr_func(opt.dn_l1_weight_init, opt.dn_l1_weight_final, max_steps=opt.iterations)(iteration)
-                pred_depth = viewpoint_cam.pred_depth.to("cuda", non_blocking=True)
-                rend_depth = render_pkg["surf_depth"]
+                pred_depth = gt.depth_est.to("cuda", non_blocking=True)
                 mask = rend_depth > 0.
                 # print(mask.shape)
                 # assert False
-                pred_depth_inv_normalize = depth_normalize_(pred_depth[mask])
-                rend_depth_inv_normalize = depth_normalize_(rend_depth[mask])
-                depth_loss_heuristic = l1_loss(pred_depth_inv_normalize, rend_depth_inv_normalize)
+                pred_depth_normalize = depth_normalize_(pred_depth[mask])
+                rend_depth_normalize = depth_normalize_(rend_depth[mask])
+                depth_loss_heuristic = l1_loss(pred_depth_normalize, rend_depth_normalize)
                 depth_loss += 10 * dn_l1_weight * depth_loss_heuristic
 
                 if iteration > opt.depth_from_iter + 1000:
-                    rend_depth_normal = render_pkg["surf_normal"]
-                    render_normal = render_pkg["rend_normal"]
-
                     with torch.no_grad():
                         pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth).permute(2, 0, 1)
 
                     # depth_normal_loss = l1_loss(pred_depth_normal, rend_depth_normal)
                     # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
-                    depth_normal_loss = (1 - (rend_depth_normal * pred_depth_normal).sum(dim=0)).mean()
-                    render_normal_loss = (1 - (render_normal * pred_depth_normal).sum(dim=0)).mean()
+                    depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
+                    render_normal_loss = (1 - (rend_normal * pred_depth_normal).sum(dim=0)).mean()
                     depth_loss += dn_l1_weight * (depth_normal_loss + render_normal_loss)
 
                 # isotropic regularization
@@ -139,9 +141,6 @@ def training(
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
 
-        rend_dist = render_pkg["rend_dist"]
-        rend_normal  = render_pkg['rend_normal']
-        surf_normal = render_pkg['surf_normal']
         normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
@@ -319,7 +318,7 @@ if __name__ == "__main__":
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
     parser.add_argument('--ip', type=str, default="127.0.0.1")
-    parser.add_argument('--port', type=int, default=6009)
+    parser.add_argument('--port', type=int, default=6008)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 10_000, 15_000, 20_000, 25_000, 30_000])

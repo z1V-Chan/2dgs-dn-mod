@@ -61,5 +61,7 @@ def render_net_image(render_pkg, render_items, render_mode, camera):
     return net_image
 
 def depth_normalize_(depth):
-    depth = (depth - torch.min(depth)) / (torch.max(depth) - torch.min(depth))
+    min_val = torch.min(depth).detach()
+    max_val = torch.max(depth).detach()
+    depth = (depth - min_val) / (max_val - min_val)
     return depth

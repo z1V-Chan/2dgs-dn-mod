@@ -54,6 +54,7 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.preload = True
         self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature']
         super().__init__(parser, "Loading Parameters", sentinel)
 
@@ -92,7 +93,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_isotropic = 0.1
 
         self.opacity_cull = 0.4
-        self.max_screen_size = 0.3
+        self.max_screen_size = 10
 
         self.depth_from_iter = 7000
         self.dn_l1_weight_init = 0.2
