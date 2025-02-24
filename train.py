@@ -114,7 +114,7 @@ def training(
             if gt.depth_est is not None:
                 dn_l1_weight = get_expon_lr_func(opt.dn_l1_weight_init, opt.dn_l1_weight_final, max_steps=opt.iterations)(iteration)
                 pred_depth = gt.depth_est.to("cuda", non_blocking=True)
-                mask = rend_depth > 0.
+                mask = (rend_depth > 0.0) & (pred_depth > 0.0)
                 # print(mask.shape)
                 # assert False
                 pred_depth_normalize = depth_normalize_(pred_depth[mask])
