@@ -120,7 +120,7 @@ def training(
                 pred_depth_normalize = depth_normalize_(pred_depth[mask])
                 rend_depth_normalize = depth_normalize_(rend_depth[mask])
                 depth_loss_heuristic = l1_loss(pred_depth_normalize, rend_depth_normalize)
-                depth_loss += 10 * dn_l1_weight * depth_loss_heuristic
+                depth_loss += 5 * dn_l1_weight * depth_loss_heuristic
 
                 if iteration > opt.depth_from_iter + 1000:
                     with torch.no_grad():

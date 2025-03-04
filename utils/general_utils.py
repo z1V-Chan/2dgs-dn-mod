@@ -50,7 +50,7 @@ def inverse_sigmoid(x):
 
 def PILtoTorch(pil_image, resolution, scale=255.0):
     resized_image_PIL = pil_image.resize(resolution)
-    resized_image = torch.from_numpy(np.array(resized_image_PIL)) / scale
+    resized_image = torch.from_numpy(np.array(resized_image_PIL)).to(torch.float32) / scale
     if len(resized_image.shape) == 3:
         return resized_image.permute(2, 0, 1)
     else:

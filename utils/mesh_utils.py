@@ -106,9 +106,9 @@ class GaussianExtractor(object):
         for i, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="reconstruct radiance fields"):
             render_pkg = self.render(viewpoint_cam, self.gaussians)
             rgb = render_pkg['render']
-            alpha = render_pkg['rend_alpha']
-            normal = torch.nn.functional.normalize(render_pkg['rend_normal'], dim=0)
-            depth = render_pkg['surf_depth']
+            alpha = render_pkg['render_alpha']
+            normal = torch.nn.functional.normalize(render_pkg['render_normal'], dim=0)
+            depth = render_pkg['render_depth']
             depth_normal = render_pkg['surf_normal']
             self.rgbmaps.append(rgb.cpu())
             self.depthmaps.append(depth.cpu())
@@ -164,7 +164,7 @@ class GaussianExtractor(object):
             depth = self.depthmaps[i]
             
             # if we have mask provided, use it
-            if mask_backgrond and (self.viewpoint_stack[i].gt_alpha_mask is not None):
+            if mask_backgrond and (self.viewpoint_stack[i].gt().alpha is not None):
                 depth[(self.viewpoint_stack[i].gt_alpha_mask < 0.5)] = 0
 
             # make open3d rgbd
@@ -287,7 +287,7 @@ class GaussianExtractor(object):
         os.makedirs(vis_path, exist_ok=True)
         os.makedirs(gts_path, exist_ok=True)
         for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="export images"):
-            gt = viewpoint_cam.original_image[0:3, :, :]
+            gt = viewpoint_cam.gt().image[0:3, :, :]
             save_img_u8(gt.permute(1,2,0).cpu().numpy(), os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
             save_img_u8(self.rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
             save_img_f32(self.depthmaps[idx][0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
