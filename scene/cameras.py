@@ -168,8 +168,8 @@ def load_image(
         loaded_mask = None
         gt_image = resized_image_rgb
 
-    resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=1e3) if depth_cam_pil is not None else None
-    resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
+    resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=6553.5) if depth_cam_pil is not None else None
+    resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=6553.5) if depth_est_pil is not None else None
 
     image_pil.close()
     if depth_cam_pil is not None:
