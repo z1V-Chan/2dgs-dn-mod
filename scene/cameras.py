@@ -14,7 +14,7 @@ import torch
 from torch import nn
 import numpy as np
 from PIL import Image
-from utils.general_utils import FreeImage, PILtoTorch
+from utils.general_utils import PILtoTorch
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
 class GroundTruth(NamedTuple):

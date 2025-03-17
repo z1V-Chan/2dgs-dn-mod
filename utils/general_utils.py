@@ -17,34 +17,6 @@ import numpy as np
 import random
 from PIL import Image
 
-class FreeImage():
-    def __init__(self, path: str):
-        assert os.path.exists(path), f"{path} file does not exist"
-        assert (
-            path.endswith(".png")
-            or path.endswith(".jpg")
-            or path.endswith(".jpeg")
-            or path.endswith(".bmp")
-            or path.endswith(".tiff")
-            or path.endswith(".tif")
-        ), "Only PNG, JPG, JPEG, BMP, TIFF files are supported"
-
-        self.__path = path
-        with Image.open(path) as __tmp_img_pil:
-            self.__size = __tmp_img_pil.size
-
-    def get_image(self):
-        """
-        Returns the image as a PIL Image object
-        NOTE: return object should be closed after use
-        """
-        ret = Image.open(self.__path)
-        return ret
-
-    @property
-    def size(self):
-        return self.__size
-
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
