@@ -23,6 +23,8 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 
+import yaml
+
 class CameraInfo(NamedTuple):
     uid: int
     R: np.ndarray
@@ -183,12 +185,25 @@ def readColmapSceneInfo(path, images, eval, llffhold=20):
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        # NOTE: This is a hack to make sure that the same cameras are used for training and testing
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+        split_file = os.path.join(path, "split.yml")
+        if os.path.exists(split_file):
+            print("Reading split file")
+            with open(split_file, "r") as f:
+                split = yaml.safe_load(f)
+            train_list = split["train"]
+            test_list = split["test"]
+            train_cam_infos = [c for c in cam_infos if c.image_name in train_list]
+            test_cam_infos = [c for c in cam_infos if c.image_name in test_list]
+        else:
+            print("Split file not found, using LLFF holdout")
+            # NOTE: This is a hack to make sure that the same cameras are used for training and testing
+            train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+            test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
+
+    print(f"Train cameras: {len(train_cam_infos)}, Test cameras: {len(test_cam_infos)}")
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
