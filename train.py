@@ -82,7 +82,10 @@ def training(
         gt = viewpoint_cam.gt(release=False)
 
         gt_image = gt.image.to(device="cuda", non_blocking=True)
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+
+        drop_rate = opt.drop_rate * (iteration/10000) if iteration > opt.drop_from_iter else 0.0
+
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, drop_rate=drop_rate)
         viewspace_point_tensor, visibility_filter, radii = render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         image: torch.Tensor = render_pkg["render"] # [3, H, W]
         rend_depth: torch.Tensor = render_pkg["render_depth"] # [1, H, W]
@@ -132,10 +135,10 @@ def training(
                     render_normal_loss = (1 - (rend_normal * pred_depth_normal).sum(dim=0)).mean()
                     depth_loss += dn_l1_weight * (depth_normal_loss + render_normal_loss)
 
-                # isotropic regularization
-                if opt.lambda_isotropic > 0:
-                    reg_loss = isotropic_loss(gaussians.get_scaling)
-                    loss += opt.lambda_isotropic * reg_loss
+            # isotropic regularization
+            if opt.lambda_isotropic > 0:
+                reg_loss = isotropic_loss(gaussians.get_scaling)
+                loss += opt.lambda_isotropic * reg_loss
 
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
@@ -181,7 +184,7 @@ def training(
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+                scene.save(iteration)  
 
             # Densification
             if iteration < opt.densify_until_iter:

@@ -17,6 +17,7 @@ from scene.cameras import Camera
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
+import torch.nn.functional as F
 
 
 def render(
@@ -26,6 +27,7 @@ def render(
     bg_color: torch.Tensor,
     scaling_modifier=1.0,
     override_color=None,
+    drop_rate=0.0,
 ):
     """
     Render the scene. 
@@ -105,6 +107,14 @@ def render(
             shs = pc.get_features
     else:
         colors_precomp = override_color
+
+    if drop_rate > 0.0:
+        # Create initial compensation factor (1 for each Gaussian)
+        compensation = torch.ones(opacity.shape[0], dtype=torch.float32, device="cuda")
+        compensation = F.dropout(compensation, p=drop_rate, training=True)
+
+        # Apply to opacity
+        opacity = opacity * compensation[:, None]
 
     rendered_image, radii, allmap = rasterizer(
         means3D = means3D,
