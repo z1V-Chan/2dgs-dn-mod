@@ -44,9 +44,11 @@ def render(
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
+    w, h = viewpoint_camera.resolution
+
     raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
+        image_height=int(h),
+        image_width=int(w),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
         bg=bg_color,

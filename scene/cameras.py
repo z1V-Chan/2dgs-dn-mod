@@ -30,8 +30,8 @@ class Camera(nn.Module):
     def __init__(
         self,
         colmap_id,
-        R,
-        T,
+        R: np.ndarray,
+        T: np.ndarray,
         FoVx,
         FoVy,
         resolution,
@@ -48,25 +48,29 @@ class Camera(nn.Module):
 
         self.uid = uid
         self.colmap_id = colmap_id
-        self.R = R
-        self.T = T
+        self.R = R # W2C.T
+        self.T = T # W2C
         self.FoVx = FoVx
         self.FoVy = FoVy
+
+        self.FoVx_old = FoVx
+        self.FoVy_old = FoVy
+
         self.image_name = image_name
 
         self.resolution = resolution
-
+        self.resolution_original = resolution
         # self.data_device = torch.device("cpu")
 
         self.__original_image = image_path
         # move to device at dataloader to reduce VRAM requirement
-        self.__sensor_depth = depth_cam_path if depth_cam_path is not None else None
-        self.__pred_depth = depth_est_path if depth_est_path is not None else None
+        self.__sensor_depth = depth_cam_path + ".png" if depth_cam_path is not None else None
+        self.__pred_depth = depth_est_path + ".png" if depth_est_path is not None else None
 
-        self.image_width = resolution[0]
-        self.image_height = resolution[1]
+        # self.image_width = resolution[0]
+        # self.image_height = resolution[1]
 
-        self._gt = load_image(resolution, image_path, depth_cam_path, depth_est_path) if Camera.preload else None
+        self._gt = load_image(resolution, image_path, self.__sensor_depth, self.__pred_depth) if Camera.preload else None
 
         self.zfar = 100.0
         self.znear = 0.01
@@ -94,7 +98,7 @@ class Camera(nn.Module):
     def gt(self, release=True):
         if self._gt is None:
             original_image, gt_alpha_mask, sensor_depth, pred_depth = load_image(
-                self.resolution,
+                self.resolution_original,
                 self.__original_image,
                 self.__sensor_depth,
                 self.__pred_depth,

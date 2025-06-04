@@ -109,12 +109,12 @@ def readColmapCameras(
 
         depth_cam_path = None
         if depth_cam_folder is not None:
-            depth_cam_path = os.path.join(depth_cam_folder, os.path.basename(extr.name))
+            depth_cam_path = os.path.join(depth_cam_folder, image_name)
 
         depth_est_path = None
         # assert depth_cam is not None, "Depth camera is required for training"
         if depth_est_folder is not None:
-            depth_est_path = os.path.join(depth_est_folder, os.path.basename(extr.name))
+            depth_est_path = os.path.join(depth_est_folder, image_name)
 
         cam_info = CameraInfo(
             uid=uid,
@@ -179,7 +179,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=20):
         cam_extrinsics=cam_extrinsics,
         cam_intrinsics=cam_intrinsics,
         images_folder=os.path.join(path, reading_dir),
-        depth_cam_folder=os.path.join(path, "depths") if os.path.exists(os.path.join(path, "depths")) else None,
+        depth_cam_folder=os.path.join(path, "depths_cam") if os.path.exists(os.path.join(path, "depths_cam")) else None,
         depth_est_folder=os.path.join(path, "depths_est") if os.path.exists(os.path.join(path, "depths_est")) else None
     )
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
