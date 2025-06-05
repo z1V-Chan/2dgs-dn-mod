@@ -114,7 +114,7 @@ def training(
                 # print(gt_depth.shape)
                 # assert False
 
-            if gt.depth_est is not None:
+            if gt.depth_est is not None and iteration > opt.depth_from_iter + 2000:
                 dn_l1_weight = get_expon_lr_func(opt.dn_l1_weight_init, opt.dn_l1_weight_final, max_steps=opt.iterations)(iteration)
                 pred_depth = gt.depth_est.to("cuda", non_blocking=True)
                 mask = (rend_depth > 0.0) & (pred_depth > 0.0)
@@ -125,15 +125,14 @@ def training(
                 depth_loss_heuristic = l1_loss(pred_depth_normalize, rend_depth_normalize)
                 depth_loss += 5 * dn_l1_weight * depth_loss_heuristic
 
-                if iteration > opt.depth_from_iter + 1000:
-                    with torch.no_grad():
-                        pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth).permute(2, 0, 1)
+                with torch.no_grad():
+                    pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth).permute(2, 0, 1)
 
-                    # depth_normal_loss = l1_loss(pred_depth_normal, rend_depth_normal)
-                    # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
-                    depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
-                    render_normal_loss = (1 - (rend_normal * pred_depth_normal).sum(dim=0)).mean()
-                    depth_loss += dn_l1_weight * (depth_normal_loss + render_normal_loss)
+                # depth_normal_loss = l1_loss(pred_depth_normal, rend_depth_normal)
+                # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
+                depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
+                render_normal_loss = (1 - (rend_normal * pred_depth_normal).sum(dim=0)).mean()
+                depth_loss += dn_l1_weight * (depth_normal_loss + render_normal_loss)
 
             # isotropic regularization
             if opt.lambda_isotropic > 0:
