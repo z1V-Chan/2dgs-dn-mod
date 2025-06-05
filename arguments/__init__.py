@@ -86,21 +86,21 @@ class OptimizationParams(ParamGroup):
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
-        self.lambda_dist = 10.0
+        self.lambda_dist = 0.0
         self.lambda_normal = 0.05
         
-        self.lambda_depth_sensor = 2.0
+        self.lambda_depth_sensor = 1.0
         self.lambda_isotropic = 1e-1
 
         self.opacity_cull = 0.3
         self.max_screen_size = 1.0
 
-        self.depth_from_iter = 5000
+        self.depth_from_iter = 0
         self.dn_l1_weight_init = 0.2
         self.dn_l1_weight_final = 0.075
 
         self.drop_rate = 0.2
-        self.drop_from_iter = 12000
+        self.drop_from_iter = 0
 
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
