@@ -16,7 +16,7 @@ from utils.loss_utils import isotropic_loss, l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import get_expon_lr_func, safe_state
+from utils.general_utils import PILtoTorch, TorchToPIL, get_expon_lr_func, safe_state
 import uuid
 from tqdm import tqdm
 from utils.image_utils import depth_normalize_, psnr, render_net_image
@@ -77,6 +77,7 @@ def training(
             viewpoint_stack = scene.getTrainCameras().copy()
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
+        # viewpoint_cam = viewpoint_stack.pop(0)
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
         gt = viewpoint_cam.gt(release=False)
@@ -92,6 +93,21 @@ def training(
         rend_normal: torch.Tensor = render_pkg['render_normal'] # [3, H, W]
         surf_normal: torch.Tensor = render_pkg['surf_normal'] # [3, H, W]
         rend_dist: torch.Tensor = render_pkg["render_dist"] # [1, H, W]
+
+        # with torch.no_grad():
+        #     image_gt_pil = TorchToPIL(gt_image)
+        #     image_gt_pil.save(os.path.join("tmp", "{}_gt.png".format(viewpoint_cam.image_name)))
+
+        #     image_render_pil = TorchToPIL(image)
+        #     image_render_pil.save(os.path.join("tmp", "{}_render.png".format(viewpoint_cam.image_name)))
+
+        #     # depth_render_pil = TorchToPIL(rend_depth)
+        #     # depth_render_pil.save(os.path.join("tmp", "{}_depth.png".format(viewpoint_cam.image_name)))
+
+        #     # normal_render_pil = TorchToPIL(surf_normal.permute(1, 2, 0) * 0.5 + 0.5)
+        #     # normal_render_pil.save(os.path.join("tmp", "{}_normal.png".format(viewpoint_cam.image_name)))
+
+        # assert False
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))

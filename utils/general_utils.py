@@ -28,6 +28,17 @@ def PILtoTorch(pil_image, resolution, scale=255.0):
     else:
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
 
+def TorchToPIL(tensor_image, scale=255.0) -> Image.Image:
+    if len(tensor_image.shape) == 3:
+        tensor_image = tensor_image.permute(1, 2, 0)
+    elif len(tensor_image.shape) == 2:
+        tensor_image = tensor_image.unsqueeze(dim=-1).permute(1, 2, 0)
+    else:
+        raise ValueError("Input tensor must be of shape (C, H, W) or (H, W) or (H, W, C)")
+    
+    resized_image = (tensor_image.cpu().numpy() * scale).astype(np.uint8)
+    return Image.fromarray(resized_image)
+
 def get_expon_lr_func(
     lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
 ):
