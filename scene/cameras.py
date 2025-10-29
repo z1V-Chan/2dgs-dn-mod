@@ -65,7 +65,7 @@ class Camera(nn.Module):
         self.__original_image = image_path
         # move to device at dataloader to reduce VRAM requirement
         self.__sensor_depth = depth_cam_path + ".png" if depth_cam_path is not None else None
-        self.__pred_depth = depth_est_path + ".png" if depth_est_path is not None else None
+        self.__pred_depth = depth_est_path + ".npz" if depth_est_path is not None else None
 
         # self.image_width = resolution[0]
         # self.image_height = resolution[1]
@@ -156,7 +156,8 @@ def load_image(
     """
     image_pil = Image.open(image_path)
     depth_cam_pil = Image.open(depth_cam_path) if depth_cam_path is not None else None
-    depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
+    # depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
+    depth_est_np: np.ndarray = np.load(depth_est_path) if depth_est_path is not None else None
 
     if len(image_pil.split()) > 3:
         # assert False, "Image has more than 3 channels, not supported"
@@ -173,13 +174,14 @@ def load_image(
         gt_image = resized_image_rgb
 
     resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=1e3) if depth_cam_pil is not None else None
-    resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
+    # resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
+    resized_depth_est = torch.tensor(depth_est_np, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_np is not None else None
 
     image_pil.close()
     if depth_cam_pil is not None:
         depth_cam_pil.close()
-    if depth_est_pil is not None:
-        depth_est_pil.close()
+    # if depth_est_pil is not None:
+    #     depth_est_pil.close()
 
     return GroundTruth(
         gt_image.clamp(0.0, 1.0), loaded_mask, resized_depth_cam, resized_depth_est
