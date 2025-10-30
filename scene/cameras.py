@@ -157,15 +157,12 @@ def load_image(
     image_pil = Image.open(image_path)
     depth_cam_pil = Image.open(depth_cam_path) if depth_cam_path is not None else None
     # depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
-    depth_est_np: np.ndarray = np.load(depth_est_path) if depth_est_path is not None else None
+    depth_est_np: np.ndarray = np.load(depth_est_path)["depth"] if depth_est_path is not None else None
 
     if len(image_pil.split()) > 3:
         # assert False, "Image has more than 3 channels, not supported"
-        import torch
 
-        resized_image_rgb = torch.cat(
-            [PILtoTorch(im, resolution) for im in image_pil.split()[:3]], dim=0
-        )
+        resized_image_rgb = torch.cat([PILtoTorch(im, resolution) for im in image_pil.split()[:3]], dim=0)
         loaded_mask = PILtoTorch(image_pil.split()[3], resolution)
         gt_image = resized_image_rgb
     else:
