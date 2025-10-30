@@ -173,6 +173,12 @@ def load_image(
     resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=1e3) if depth_cam_pil is not None else None
     # resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
     resized_depth_est = torch.tensor(depth_est_np, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_np is not None else None
+    resized_depth_est = torch.nn.functional.interpolate(
+        resized_depth_est.unsqueeze(0),
+        size=(resolution[1], resolution[0]),
+        mode="bicubic",
+        align_corners=True,
+    ).squeeze(0) if depth_est_np is not None else None
 
     image_pil.close()
     if depth_cam_pil is not None:
