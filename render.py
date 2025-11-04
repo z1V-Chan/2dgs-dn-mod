@@ -57,7 +57,7 @@ if __name__ == "__main__":
     test_dir = os.path.join(args.model_path, 'test', "ours_{}".format(scene.loaded_iter))
     gaussExtractor = GaussianExtractor(gaussians, render, pipe, bg_color=bg_color)    
     
-    os.environ["OMP_NUM_THREADS"] = "8"
+    os.environ["OMP_NUM_THREADS"] = "4"  # Limit the number of threads to avoid overloading DRAM
 
     if not args.skip_train:
         print("export training images ...")
