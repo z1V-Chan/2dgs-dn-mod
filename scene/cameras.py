@@ -16,12 +16,15 @@ import numpy as np
 from PIL import Image
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
+import os
 
 class GroundTruth(NamedTuple):
     image: torch.Tensor
     alpha: torch.Tensor | None
     depth_cam: torch.Tensor | None
     depth_est: torch.Tensor | None
+    inpaint_mask: torch.Tensor | None = None
+    inpaint_depth: torch.Tensor | None = None
 
 class Camera(nn.Module):
 
@@ -38,6 +41,8 @@ class Camera(nn.Module):
         image_path: str,
         depth_cam_path: str | None,
         depth_est_path: str | None,
+        inpaint_mask_path: str | None,
+        inpaint_depth_path: str | None,
         image_name,
         uid,
         trans=np.array([0.0, 0.0, 0.0]),
@@ -66,11 +71,13 @@ class Camera(nn.Module):
         # move to device at dataloader to reduce VRAM requirement
         self.__sensor_depth = depth_cam_path + ".png" if depth_cam_path is not None else None
         self.__pred_depth = depth_est_path + ".npz" if depth_est_path is not None else None
-
+        self.__inpaint_mask = inpaint_mask_path + ".png" if inpaint_mask_path is not None else None
+        self.__inpaint_depth = inpaint_depth_path + ".png" if inpaint_depth_path is not None else None
+        
         # self.image_width = resolution[0]
         # self.image_height = resolution[1]
 
-        self._gt = load_image(resolution, image_path, self.__sensor_depth, self.__pred_depth) if Camera.preload else None
+        self._gt = load_image(resolution, image_path, self.__sensor_depth, self.__pred_depth, self.__inpaint_mask, self.__inpaint_depth) if Camera.preload else None
 
         self.zfar = 100.0
         self.znear = 0.01
@@ -148,6 +155,8 @@ def load_image(
     image_path: str,
     depth_cam_path: str | None = None,
     depth_est_path: str | None = None,
+    inpaint_mask_path: str | None = None,
+    inpaint_depth_path: str | None = None,
 ):
     """
     Load the image and depth maps from the FreeImage objects
@@ -159,6 +168,22 @@ def load_image(
     # depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
     depth_est_np: np.ndarray = np.load(depth_est_path)["depth"] if depth_est_path is not None else None
 
+    # add for inpainting 
+    if inpaint_mask_path is not None:
+        inpaint_mask_pil = Image.open(inpaint_mask_path) 
+        inpainted_depth_pil = Image.open(inpaint_depth_path).convert('L') 
+        inpainted_depth_name = inpaint_depth_path.split('/')[-1] 
+        inpainted_depth_dir = os.path.dirname(inpaint_depth_path)
+        depth_range_name = inpainted_depth_name.replace('.png', '.pt')
+        d_min, d_max = torch.load(os.path.join(inpainted_depth_dir, depth_range_name), weights_only=False)
+        
+        inpaint_mask_tensor = PILtoTorch(inpaint_mask_pil, resolution)
+        inpaint_depth_tensor = PILtoTorch(inpainted_depth_pil, resolution)
+        inpaint_depth_tensor = inpaint_depth_tensor * (d_max - d_min) + d_min
+    else:
+        inpaint_mask_tensor = None
+        inpaint_depth_tensor = None  
+        
     if len(image_pil.split()) > 3:
         # assert False, "Image has more than 3 channels, not supported"
 
@@ -171,6 +196,7 @@ def load_image(
         gt_image = resized_image_rgb
 
     resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=1e3) if depth_cam_pil is not None else None
+
     # resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
     resized_depth_est = torch.tensor(depth_est_np, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_np is not None else None
     resized_depth_est = torch.nn.functional.interpolate(
@@ -179,6 +205,8 @@ def load_image(
         mode="bicubic",
         align_corners=True,
     ).squeeze(0) if depth_est_np is not None else None
+    
+
 
     image_pil.close()
     if depth_cam_pil is not None:
@@ -187,5 +215,5 @@ def load_image(
     #     depth_est_pil.close()
 
     return GroundTruth(
-        gt_image.clamp(0.0, 1.0), loaded_mask, resized_depth_cam, resized_depth_est
+        gt_image.clamp(0.0, 1.0), loaded_mask, resized_depth_cam, resized_depth_est, inpaint_mask_tensor, inpaint_depth_tensor
     )
