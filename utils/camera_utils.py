@@ -52,6 +52,8 @@ def loadCam(args: ModelParams, id, cam_info: CameraInfo, resolution_scale):
         image_path=cam_info.image_path,
         depth_cam_path=cam_info.depth_cam_path,
         depth_est_path=cam_info.depth_est_path,
+        inpaint_mask_path=cam_info.inpaint_mask_path,
+        inpaint_depth_path=cam_info.inpaint_depth_path,
         image_name=cam_info.image_name,
         uid=id,
         data_device=args.data_device,

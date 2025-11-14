@@ -33,6 +33,8 @@ class CameraInfo(NamedTuple):
     FovX: np.ndarray
     depth_cam_path: str
     depth_est_path: str
+    inpaint_mask_path: str
+    inpaint_depth_path: str
     image_path: str
     image_name: str
     width: int
@@ -75,6 +77,8 @@ def readColmapCameras(
     images_folder,
     depth_cam_folder=None,
     depth_est_folder=None,
+    inpaint_mask_folder=None,
+    inpaint_depth_folder=None,
 ):
     cam_infos: list[CameraInfo] = []
     for idx, key in enumerate(cam_extrinsics):
@@ -115,6 +119,12 @@ def readColmapCameras(
         # assert depth_cam is not None, "Depth camera is required for training"
         if depth_est_folder is not None:
             depth_est_path = os.path.join(depth_est_folder, image_name)
+        inpaint_mask_path = None
+        inpaint_depth_path = None
+        if inpaint_mask_folder is not None:
+            inpaint_mask_path = os.path.join(inpaint_mask_folder, image_name)
+        if inpaint_depth_folder is not None:   
+            inpaint_depth_path = os.path.join(inpaint_depth_folder, image_name)
 
         cam_info = CameraInfo(
             uid=uid,
@@ -124,6 +134,8 @@ def readColmapCameras(
             FovX=FovX,
             depth_cam_path=depth_cam_path,
             depth_est_path=depth_est_path,
+            inpaint_mask_path = inpaint_mask_path,
+            inpaint_depth_path = inpaint_depth_path,
             image_path=image_path,
             image_name=image_name,
             width=width,
@@ -180,7 +192,9 @@ def readColmapSceneInfo(path, images, eval, llffhold=20):
         cam_intrinsics=cam_intrinsics,
         images_folder=os.path.join(path, reading_dir),
         depth_cam_folder=os.path.join(path, "depths_cam") if os.path.exists(os.path.join(path, "depths_cam")) else None,
-        depth_est_folder=os.path.join(path, "depths_est") if os.path.exists(os.path.join(path, "depths_est")) else None
+        depth_est_folder=os.path.join(path, "depths_est") if os.path.exists(os.path.join(path, "depths_est")) else None,
+        inpaint_mask_folder=os.path.join(path, "inpaint_mask") if os.path.exists(os.path.join(path, "inpaint_mask")) else None,
+        inpaint_depth_folder=os.path.join(path, "inpaint_depth") if os.path.exists(os.path.join(path, "inpaint_depth")) else None
     )
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
