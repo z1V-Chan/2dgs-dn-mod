@@ -95,6 +95,8 @@ class OptimizationParams(ParamGroup):
         self.opacity_cull = 0.3
         self.max_screen_size = 1.0
 
+        self.depth_supervision_absolute = False
+
         self.depth_from_iter = 0
         self.dn_l1_weight_init = 0.2
         self.dn_l1_weight_final = 0.075
