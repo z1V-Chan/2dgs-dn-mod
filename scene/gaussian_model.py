@@ -20,7 +20,35 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from scipy.spatial import KDTree
 
+def save_pointcloud_ply(points: torch.Tensor, filename: str):
+    """
+    将形状为 [N, 3] 的点云保存为 PLY 文件（ASCII 格式）
+    Args:
+        points (torch.Tensor): Nx3 张量，每一行是 [x, y, z]
+        filename (str): 保存路径，例如 'pointcloud.ply'
+    """
+    assert points.ndim == 2 and points.shape[1] == 3, "输入必须是 Nx3 的 tensor"
+    points = points.detach().cpu().numpy()
+
+    header = f"""ply
+        format ascii 1.0
+        element vertex {points.shape[0]}
+        property float x
+        property float y
+        property float z
+        end_header
+"""
+
+    with open(filename, 'w') as f:
+        f.write(header)
+        for x, y, z in points:
+            f.write(f"{x} {y} {z}\n")
+
+    print(f"✅ 保存完成: {filename}, 共 {points.shape[0]} 个点")
+    
+    
 class GaussianModel:
 
     def setup_functions(self):
@@ -405,3 +433,132 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+        
+        
+    def inpaint_setup(self, training_args, mask3d, inpaint_pcds):
+
+        def initialize_new_features(features, num_new_points, mask_xyz_values, distance_threshold=0.25, max_distance_threshold=1, k=5, pcds=None):
+            """Initialize new points for multiple features based on neighbouring points in the remaining area."""
+            new_features = {}
+            
+            if num_new_points == 0:
+                for key in features:
+                    new_features[key] = torch.empty((0, *features[key].shape[1:]), device=features[key].device)
+                return new_features
+
+            # Get remaining points from features
+            remaining_xyz_values = features["xyz"]
+            remaining_xyz_values_np = remaining_xyz_values.cpu().numpy()
+            
+            # Build a KD-Tree for fast nearest-neighbor lookup
+            kdtree = KDTree(remaining_xyz_values_np)
+            
+            # Sample random points from mask_xyz_values as query points
+            if pcds is None:
+                mask_xyz_values_np = mask_xyz_values.cpu().numpy()
+                query_points = mask_xyz_values_np
+            else:
+                query_points = pcds[:, :3]
+
+            # Find the k nearest neighbors in the remaining points for each query point
+            distances, indices = kdtree.query(query_points, k=k)
+            selected_indices = indices
+
+            # Initialize new points for each feature
+            for key, feature in features.items():
+                # Convert feature to numpy array
+                feature_np = feature.cpu().numpy()
+                
+                # If we have valid neighbors, calculate the mean of neighbor points
+                if feature_np.ndim == 2:
+                    neighbor_points = feature_np[selected_indices]
+                elif feature_np.ndim == 3:
+                    neighbor_points = feature_np[selected_indices, :, :]
+                else:
+                    raise ValueError(f"Unsupported feature dimension: {feature_np.ndim}")
+                new_points_np = np.mean(neighbor_points, axis=1)
+                
+                # Convert back to tensor
+                new_features[key] = torch.tensor(new_points_np, device=feature.device, dtype=feature.dtype)
+            # 把点云颜色直接赋予新点
+            if pcds is not None:
+                new_features['xyz'] = torch.tensor(pcds[:, :3]).float().cuda()
+                new_features['features_dc'] =  RGB2SH(torch.tensor(pcds[:, 3:]).float().cuda()).unsqueeze(1)
+            return new_features['xyz'], new_features['features_dc'], new_features['scaling'], new_features['features_rest'], new_features['opacity'], new_features['rotation']
+        
+        
+        mask3d = torch.from_numpy(mask3d).to(self._xyz.device)
+        mask3d = ~mask3d.bool().squeeze()
+        mask_xyz_values = self._xyz[~mask3d]
+
+        # Extracting subsets using the mask
+        xyz_sub = self._xyz[mask3d].detach()
+        features_dc_sub = self._features_dc[mask3d].detach()
+        features_rest_sub = self._features_rest[mask3d].detach()
+        opacity_sub = self._opacity[mask3d].detach()
+        scaling_sub = self._scaling[mask3d].detach()
+        rotation_sub = self._rotation[mask3d].detach()
+
+        # Add new points with random initialization
+        sub_features = {
+            'xyz': xyz_sub,
+            'features_dc': features_dc_sub,
+            'scaling': scaling_sub,
+            'features_rest': features_rest_sub,
+            'opacity': opacity_sub,
+            'rotation': rotation_sub,
+        }
+
+        num_new_points = len(mask_xyz_values)
+        with torch.no_grad():
+            new_xyz, new_features_dc, new_scaling, new_features_rest, new_opacity, new_rotation = initialize_new_features(sub_features, num_new_points, mask_xyz_values, pcds = inpaint_pcds)
+
+
+        def set_requires_grad(tensor, requires_grad):
+            """Returns a new tensor with the specified requires_grad setting."""
+            return tensor.detach().clone().requires_grad_(requires_grad)
+
+        # Construct nn.Parameters with specified gradients
+        self._xyz = nn.Parameter(torch.cat([set_requires_grad(xyz_sub, False), set_requires_grad(new_xyz, True)]))
+        self._features_dc = nn.Parameter(torch.cat([set_requires_grad(features_dc_sub, False), set_requires_grad(new_features_dc, True)]))
+        self._features_rest = nn.Parameter(torch.cat([set_requires_grad(features_rest_sub, False), set_requires_grad(new_features_rest, True)]))
+        self._opacity = nn.Parameter(torch.cat([set_requires_grad(opacity_sub, False), set_requires_grad(new_opacity, True)]))
+        self._scaling = nn.Parameter(torch.cat([set_requires_grad(scaling_sub, False), set_requires_grad(new_scaling, True)]))
+        self._rotation = nn.Parameter(torch.cat([set_requires_grad(rotation_sub, False), set_requires_grad(new_rotation, True)]))
+        
+        # self._xyz = nn.Parameter(torch.cat([set_requires_grad(xyz_sub, True), set_requires_grad(new_xyz, True)]))
+        # self._features_dc = nn.Parameter(torch.cat([set_requires_grad(features_dc_sub, True), set_requires_grad(new_features_dc, True)]))
+        # self._features_rest = nn.Parameter(torch.cat([set_requires_grad(features_rest_sub, True), set_requires_grad(new_features_rest, True)]))
+        # self._opacity = nn.Parameter(torch.cat([set_requires_grad(opacity_sub, True), set_requires_grad(new_opacity, True)]))
+        # self._scaling = nn.Parameter(torch.cat([set_requires_grad(scaling_sub, True), set_requires_grad(new_scaling, True)]))
+        # self._rotation = nn.Parameter(torch.cat([set_requires_grad(rotation_sub, True), set_requires_grad(new_rotation, True)]))
+      
+        # self._xyz = nn.Parameter(set_requires_grad(self._xyz, True))
+        # self._features_dc = nn.Parameter(set_requires_grad(self._features_dc, True))
+        # self._features_rest = nn.Parameter(set_requires_grad(self._features_rest, True))
+        # self._opacity = nn.Parameter(set_requires_grad(self._opacity, True))
+        # self._scaling = nn.Parameter(set_requires_grad(self._scaling, True))
+        # self._rotation = nn.Parameter(set_requires_grad(self._rotation, True))
+        
+        
+        # for optimize
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.percent_dense = training_args.percent_dense
+        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+
+        # Setup optimizer. Only the new points will have gradients.
+        l = [
+            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+            {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
+            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
+            {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
+            {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+        ]
+
+        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
+                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale,
+                                                    lr_delay_mult=training_args.position_lr_delay_mult,
+                                                    max_steps=training_args.position_lr_max_steps)
