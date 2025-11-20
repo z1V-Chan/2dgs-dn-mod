@@ -166,9 +166,9 @@ def training(
 
                 # depth_normal_loss = l1_loss(pred_depth_normal, rend_depth_normal)
                 # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
-                depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
+                # depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
                 render_normal_loss = (1 - (rend_normal * pred_depth_normal).sum(dim=0)).mean()
-                depth_loss += dn_l1_weight * (depth_normal_loss + render_normal_loss)
+                depth_loss += dn_l1_weight * render_normal_loss
 
             # isotropic regularization
             if opt.lambda_isotropic > 0:
