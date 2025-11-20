@@ -73,11 +73,22 @@ class Camera(nn.Module):
         self.__pred_depth = depth_est_path + ".npz" if depth_est_path is not None else None
         self.__inpaint_mask = inpaint_mask_path + ".png" if inpaint_mask_path is not None else None
         self.__inpaint_depth = inpaint_depth_path + ".png" if inpaint_depth_path is not None else None
-        
+
         # self.image_width = resolution[0]
         # self.image_height = resolution[1]
 
-        self._gt = load_image(resolution, image_path, self.__sensor_depth, self.__pred_depth, self.__inpaint_mask, self.__inpaint_depth) if Camera.preload else None
+        self._gt = (
+            load_image(
+                resolution,
+                image_path,
+                self.__sensor_depth,
+                self.__pred_depth,
+                self.__inpaint_mask,
+                self.__inpaint_depth,
+            )
+            if Camera.preload
+            else None
+        )
 
         self.zfar = 100.0
         self.znear = 0.01
@@ -103,6 +114,10 @@ class Camera(nn.Module):
         self.camera_center = self.world_view_transform.inverse()[3, :3]
 
     def gt(self, release=True):
+        """
+        Load ground truth data if not preloaded.
+        If `release` is True, release the data after returning it.
+        """
         if self._gt is None:
             original_image, gt_alpha_mask, sensor_depth, pred_depth = load_image(
                 self.resolution_original,
@@ -168,7 +183,7 @@ def load_image(
     # depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
     depth_est_np: np.ndarray = np.load(depth_est_path)["depth"] if depth_est_path is not None else None
 
-    # add for inpainting 
+    # add for inpainting
     if inpaint_mask_path is not None:
         inpaint_mask_pil = Image.open(inpaint_mask_path) 
         inpainted_depth_pil = Image.open(inpaint_depth_path).convert('L') 
@@ -176,14 +191,14 @@ def load_image(
         inpainted_depth_dir = os.path.dirname(inpaint_depth_path)
         depth_range_name = inpainted_depth_name.replace('.png', '.pt')
         d_min, d_max = torch.load(os.path.join(inpainted_depth_dir, depth_range_name), weights_only=False)
-        
+
         inpaint_mask_tensor = PILtoTorch(inpaint_mask_pil, resolution)
         inpaint_depth_tensor = PILtoTorch(inpainted_depth_pil, resolution)
         inpaint_depth_tensor = inpaint_depth_tensor * (d_max - d_min) + d_min
     else:
         inpaint_mask_tensor = None
         inpaint_depth_tensor = None  
-        
+
     if len(image_pil.split()) > 3:
         # assert False, "Image has more than 3 channels, not supported"
 
@@ -199,14 +214,12 @@ def load_image(
 
     # resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
     resized_depth_est = torch.tensor(depth_est_np, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_np is not None else None
-    resized_depth_est = torch.nn.functional.interpolate(
-        resized_depth_est.unsqueeze(0),
-        size=(resolution[1], resolution[0]),
-        mode="bicubic",
-        align_corners=True,
-    ).squeeze(0) if depth_est_np is not None else None
-    
-
+    # resized_depth_est = torch.nn.functional.interpolate(
+    #     resized_depth_est.unsqueeze(0),
+    #     size=(resolution[1], resolution[0]),
+    #     mode="bicubic",
+    #     align_corners=True,
+    # ).squeeze(0) if depth_est_np is not None else None
 
     image_pil.close()
     if depth_cam_pil is not None:
@@ -215,5 +228,10 @@ def load_image(
     #     depth_est_pil.close()
 
     return GroundTruth(
-        gt_image.clamp(0.0, 1.0), loaded_mask, resized_depth_cam, resized_depth_est, inpaint_mask_tensor, inpaint_depth_tensor
+        gt_image.clamp(0.0, 1.0),
+        loaded_mask,
+        resized_depth_cam,
+        resized_depth_est,
+        inpaint_mask_tensor,
+        inpaint_depth_tensor,
     )

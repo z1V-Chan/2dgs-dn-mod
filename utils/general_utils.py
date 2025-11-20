@@ -20,7 +20,7 @@ from PIL import Image
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
-def PILtoTorch(pil_image, resolution, scale=255.0):
+def PILtoTorch(pil_image: Image.Image, resolution, scale=255.0):
     resized_image_PIL = pil_image.resize(resolution)
     resized_image = torch.from_numpy(np.array(resized_image_PIL)).to(torch.float32) / scale
     if len(resized_image.shape) == 3:
@@ -28,7 +28,7 @@ def PILtoTorch(pil_image, resolution, scale=255.0):
     else:
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
 
-def TorchToPIL(tensor_image, scale=255.0) -> Image.Image:
+def TorchToPIL(tensor_image: torch.Tensor, scale=255.0) -> Image.Image:
     if len(tensor_image.shape) == 3:
         tensor_image = tensor_image.permute(1, 2, 0)
     elif len(tensor_image.shape) == 2:
