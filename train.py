@@ -133,26 +133,42 @@ def training(
             if gt.depth_est is not None and iteration > opt.depth_from_iter + 2000:
                 dn_l1_weight = get_expon_lr_func(opt.dn_l1_weight_init, opt.dn_l1_weight_final, max_steps=opt.iterations)(iteration)
                 pred_depth = gt.depth_est.to("cuda", non_blocking=True)
-                mask = (rend_depth > 0.0) & (pred_depth > 0.0)
+                h, w = pred_depth.shape[1:3]
+                H, W = rend_depth.shape[1:3]
+                rend_depth_pred_sized = torch.nn.functional.interpolate(
+                    rend_depth.unsqueeze(0),
+                    size=(h, w),
+                    mode="bicubic",
+                    align_corners=True,
+                ).squeeze(0)
+                with torch.no_grad():
+                    pred_depth_rend_sized = torch.nn.functional.interpolate(
+                        pred_depth.unsqueeze(0),
+                        size=(H, W),
+                        mode="bicubic",
+                        align_corners=True,
+                    ).squeeze(0)
+
+                mask = (rend_depth_pred_sized > 0.0) & (pred_depth > 0.0)
                 # print(mask.shape)
                 # assert False
                 if not opt.depth_supervision_absolute:
                     pred_depth_normalize = depth_normalize_(pred_depth[mask])
-                    rend_depth_normalize = depth_normalize_(rend_depth[mask])
+                    rend_depth_normalize = depth_normalize_(rend_depth_pred_sized[mask])
                 else:
                     pred_depth_normalize = pred_depth[mask]
-                    rend_depth_normalize = rend_depth[mask]
+                    rend_depth_normalize = rend_depth_pred_sized[mask]
                 depth_loss_heuristic = l1_loss(pred_depth_normalize, rend_depth_normalize)
                 depth_loss += 5 * dn_l1_weight * depth_loss_heuristic
 
                 with torch.no_grad():
-                    pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth).permute(2, 0, 1)
+                    pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth_rend_sized).permute(2, 0, 1)
 
                 # depth_normal_loss = l1_loss(pred_depth_normal, rend_depth_normal)
                 # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
-                depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
+                # depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
                 render_normal_loss = (1 - (rend_normal * pred_depth_normal).sum(dim=0)).mean()
-                depth_loss += dn_l1_weight * (depth_normal_loss + render_normal_loss)
+                depth_loss += dn_l1_weight * render_normal_loss
 
             # isotropic regularization
             if opt.lambda_isotropic > 0:
