@@ -205,7 +205,7 @@ def project_ref_pcd(ref_imgs, viewpoints):
             gt = view.gt(release=False)
             gt_image = gt.image.to(device="cuda", non_blocking=True)
             inpaint_mask = gt.inpaint_mask.to(device="cuda", non_blocking=True).bool()
-            inpaint_depth = gt.inpaint_depth.to(device="cuda", non_blocking=True)
+            inpaint_depth = gt.inpaint_depth.to(device="cuda", non_blocking=True).unsqueeze(0)
             
             points_3d = get_init_points(view, default_depth=inpaint_depth, custom_mask=inpaint_mask, gt_image=gt_image)
             pcds.append(points_3d)
@@ -222,7 +222,7 @@ def training(
     checkpoint,
     gs_path,
     remove_mask = None,
-    ref_imgs = ["00057", "00012", "00125"]
+    ref_imgs = ["00064"]
 ):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -240,7 +240,7 @@ def training(
     
     training_viewpoint = scene.getTrainCameras().copy()
     
-    inpaint_pcds = project_ref_pcd(ref_imgs, training_viewpoint)
+    # inpaint_pcds = project_ref_pcd(ref_imgs, training_viewpoint)
     inpaint_pcds = None
 
     gaussians.inpaint_setup(opt, remove_mask_np, inpaint_pcds)
@@ -300,14 +300,14 @@ def training(
 
         gt_image = gt.image.to(device="cuda", non_blocking=True)
         inpaint_mask = gt.inpaint_mask.to(device="cuda", non_blocking=True).bool()
-        inpaint_depth = gt.inpaint_depth.to(device="cuda", non_blocking=True)
+        # inpaint_depth = gt.inpaint_depth.to(device="cuda", non_blocking=True)
 
         drop_rate = opt.drop_rate * (iteration/10000) if iteration > opt.drop_from_iter else 0.0
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, drop_rate=drop_rate)
         viewspace_point_tensor, visibility_filter, radii = render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         image: torch.Tensor = render_pkg["render"] # [3, H, W]
-        rend_depth: torch.Tensor = render_pkg["render_depth"] # [1, H, W]
+        # rend_depth: torch.Tensor = render_pkg["render_depth"] # [1, H, W]
         rend_normal: torch.Tensor = render_pkg['render_normal'] # [3, H, W]
         surf_normal: torch.Tensor = render_pkg['surf_normal'] # [3, H, W]
         rend_dist: torch.Tensor = render_pkg["render_dist"] # [1, H, W]
@@ -323,11 +323,12 @@ def training(
         normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
-        
-        # Ll1 = mask_l1_loss(image, gt_image, inpaint_mask)
-        Ll1 = l1_loss(image, gt_image)
+        ssim_loss = 1 - ssim(image, gt_image)
+        Ll1 = mask_l1_loss(image, gt_image, inpaint_mask)
+        # Ll1 = l1_loss(image, gt_image)
         # total_loss = Ll1  + normal_loss + dist_loss
-        total_loss = Ll1  + dist_loss
+        # total_loss = Ll1  + dist_loss
+        total_loss = 0.8 * Ll1 + 0.2 * ssim_loss
         total_loss.backward()
 
        
@@ -335,7 +336,7 @@ def training(
             loss_dict = {
                 "Loss": f"{Ll1:.{4}f}",
                 "dist": f"{dist_loss:.{4}f}",
-                "normal": f"{normal_loss:.{4}f}",
+                "ssim": f"{ssim_loss:.{4}f}",
                 
             }
             progress_bar.set_postfix(loss_dict)
@@ -347,7 +348,7 @@ def training(
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if  iteration % 300 == 0:
+                if  iteration % 500 == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                     # gaussians.reset_opacity()
@@ -357,7 +358,7 @@ def training(
             print("\n[ITER {}] Saving Gaussians".format(iteration))         
             scene.save_inpaint(iteration)
     print("\n[ITER {}] Saving Inpaint Gaussians".format(opt.iterations + 1))         
-    scene.save_inpaint(opt.iterations + 1)           
+    # scene.save_inpaint(opt.iterations + 1)           
                 
      
 

@@ -314,12 +314,15 @@ class GaussianExtractor(object):
     
     @torch.no_grad()
     def export_normalized_depth(self, path):
-        
+        render_path = os.path.join(path, "renders")
         normalized_depth_path = os.path.join(path, "normalized_depth")
         os.makedirs(normalized_depth_path, exist_ok=True)
+        os.makedirs(render_path, exist_ok=True)
         
         for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="export images"):
             render_depth = self.depthmaps[idx].squeeze()
+            torch.save(render_depth, os.path.join(normalized_depth_path, viewpoint_cam.image_name + ".pt"))
+            save_img_u8(self.rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, viewpoint_cam.image_name + ".png"))
             # save_img_u16(gt.depth_cam.squeeze().numpy() * 1e3, os.path.join(gts_depth_path, viewpoint_cam.image_name + ".png"))
             d_min, d_max = render_depth.min(), render_depth.min() + 5
             # d_min, d_max = depth_real.min(), depth_real.max()
@@ -327,8 +330,22 @@ class GaussianExtractor(object):
 
             render_depth = (render_depth.float().clamp(0,d_max) - d_min)/(d_max-d_min)
             torchvision.utils.save_image(render_depth, os.path.join(normalized_depth_path, viewpoint_cam.image_name + ".png"))
-            torch.save((d_min,d_max),os.path.join(normalized_depth_path, viewpoint_cam.image_name + ".pt"))
+            # torch.save((d_min,d_max),os.path.join(normalized_depth_path, viewpoint_cam.image_name + ".pt"))
             
             #save_img_u16(self.depthmaps[idx].squeeze().cpu().numpy() * 1e3, os.path.join(normalized_depth_path, viewpoint_cam.image_name + ".png"))
             # save_img_f32(self.depthmaps[idx][0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
-         
+    
+    @torch.no_grad()
+    def export_normal_map(self, path):
+        
+      
+        render_normal_path = os.path.join(path, "renders_normal")
+        os.makedirs(render_normal_path, exist_ok=True)
+        raw_normal_path = os.path.join(path, "renders_raw_normal")
+        os.makedirs(raw_normal_path, exist_ok=True)
+        
+        for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="export images"):
+            save_img_u8(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(render_normal_path, viewpoint_cam.image_name + ".png"))
+            # save raw normal map
+            torch.save(self.normals[idx], os.path.join(raw_normal_path, viewpoint_cam.image_name + ".pt"))
+            

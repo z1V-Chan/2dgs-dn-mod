@@ -72,7 +72,8 @@ class Camera(nn.Module):
         self.__sensor_depth = depth_cam_path + ".png" if depth_cam_path is not None else None
         self.__pred_depth = depth_est_path + ".npz" if depth_est_path is not None else None
         self.__inpaint_mask = inpaint_mask_path + ".png" if inpaint_mask_path is not None else None
-        self.__inpaint_depth = inpaint_depth_path + ".png" if inpaint_depth_path is not None else None
+        # self.__inpaint_depth = inpaint_depth_path + ".png" if inpaint_depth_path is not None else None
+        self.__inpaint_depth = inpaint_depth_path + ".pt" if inpaint_depth_path is not None else None
         
         # self.image_width = resolution[0]
         # self.image_height = resolution[1]
@@ -171,15 +172,21 @@ def load_image(
     # add for inpainting 
     if inpaint_mask_path is not None:
         inpaint_mask_pil = Image.open(inpaint_mask_path) 
-        inpainted_depth_pil = Image.open(inpaint_depth_path).convert('L') 
-        inpainted_depth_name = inpaint_depth_path.split('/')[-1] 
-        inpainted_depth_dir = os.path.dirname(inpaint_depth_path)
-        depth_range_name = inpainted_depth_name.replace('.png', '.pt')
-        d_min, d_max = torch.load(os.path.join(inpainted_depth_dir, depth_range_name), weights_only=False)
+        # inpainted_depth_pil = Image.open(inpaint_depth_path).convert('L') 
+        # inpainted_depth_name = inpaint_depth_path.split('/')[-1] 
+        # inpainted_depth_dir = os.path.dirname(inpaint_depth_path)
+        # depth_range_name = inpainted_depth_name.replace('.png', '.pt')
+        
+        # d_min, d_max = torch.load(os.path.join(inpainted_depth_dir, depth_range_name), weights_only=False)
         
         inpaint_mask_tensor = PILtoTorch(inpaint_mask_pil, resolution)
-        inpaint_depth_tensor = PILtoTorch(inpainted_depth_pil, resolution)
-        inpaint_depth_tensor = inpaint_depth_tensor * (d_max - d_min) + d_min
+        if not os.path.exists(inpaint_depth_path):
+            inpaint_depth_tensor = None
+        else:
+            inpaint_depth_tensor = torch.load(inpaint_depth_path, weights_only=False)
+        
+        # inpaint_depth_tensor = PILtoTorch(inpainted_depth_pil, resolution)
+        # inpaint_depth_tensor = inpaint_depth_tensor * (d_max - d_min) + d_min
     else:
         inpaint_mask_tensor = None
         inpaint_depth_tensor = None  

@@ -43,6 +43,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_cluster", default=50, type=int, help='Mesh: number of connected clusters to export')
     parser.add_argument("--unbounded", action="store_true", help='Mesh: using unbounded mode for meshing')
     parser.add_argument("--mesh_res", default=1024, type=int, help='Mesh: resolution for unbounded mesh extraction')
+    parser.add_argument("--export_normal", action="store_true")
+    parser.add_argument("--save_dir", default=None, type = str, help="save rendering results")
     
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
@@ -56,6 +58,10 @@ if __name__ == "__main__":
     
     train_dir = os.path.join(args.model_path, 'train', "ours_{}".format(scene.loaded_iter))
     test_dir = os.path.join(args.model_path, 'test', "ours_{}".format(scene.loaded_iter))
+    
+    if args.save_dir is not None:
+        train_dir = os.path.join(args.save_dir, 'train')
+        test_dir = os.path.join(args.save_dir, 'test')
     gaussExtractor = GaussianExtractor(gaussians, render, pipe, bg_color=bg_color)    
     
     os.environ["OMP_NUM_THREADS"] = "4"  # Limit the number of threads to avoid overloading DRAM
@@ -65,6 +71,8 @@ if __name__ == "__main__":
         os.makedirs(train_dir, exist_ok=True)
         gaussExtractor.reconstruction(scene.getTrainCameras())
         gaussExtractor.export_normalized_depth(train_dir)
+        if args.export_normal:
+            gaussExtractor.export_normal_map(train_dir)
         
     if not args.skip_mesh:
         print("export mesh ...")

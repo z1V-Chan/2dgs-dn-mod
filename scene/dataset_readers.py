@@ -194,6 +194,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=20):
         depth_cam_folder=os.path.join(path, "depths_cam") if os.path.exists(os.path.join(path, "depths_cam")) else None,
         depth_est_folder=os.path.join(path, "depths_est") if os.path.exists(os.path.join(path, "depths_est")) else None,
         inpaint_mask_folder=os.path.join(path, "inpaint_mask") if os.path.exists(os.path.join(path, "inpaint_mask")) else None,
+        # inpaint_mask_folder=os.path.join(path, "arm_masks") if os.path.exists(os.path.join(path, "arm_masks")) else None,
         inpaint_depth_folder=os.path.join(path, "inpaint_depth") if os.path.exists(os.path.join(path, "inpaint_depth")) else None
     )
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
