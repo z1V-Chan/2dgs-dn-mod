@@ -145,6 +145,41 @@ def save_ply(points, filename):
         vertex.tofile(f)
 
     print(f"✅ 已保存点云到: {filename}  (共 {len(points)} 个点)")
+    
+def save_ply_xyz(points, filename):
+    """
+    将 (N,3) numpy 数组保存为不带颜色的 PLY 点云文件
+    points: 前三维为 xyz
+    """
+    assert points.ndim == 2 and points.shape[1] >= 3, "points 必须至少是 (N,3) 形状"
+
+    # 取 xyz
+    xyz = points[:, :3].astype(np.float32)
+
+    # 结构化数组：只有 xyz
+    vertex = np.empty(
+        xyz.shape[0],
+        dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')]
+    )
+    vertex['x'] = xyz[:, 0]
+    vertex['y'] = xyz[:, 1]
+    vertex['z'] = xyz[:, 2]
+
+    # 写入 PLY 文件
+    with open(filename, 'wb') as f:
+        header = (
+            "ply\n"
+            "format binary_little_endian 1.0\n"
+            f"element vertex {len(vertex)}\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            "end_header\n"
+        )
+        f.write(bytearray(header, 'ascii'))
+        vertex.tofile(f)
+
+    print(f"✅ 已保存点云到: {filename}  (共 {len(vertex)} 个点)")
 
 def get_init_points(cam, default_depth=False, custom_mask=None, gt_image=None):
     """
@@ -227,10 +262,13 @@ def training(
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians, crop_gs_path=gs_path)
+    scene = Scene(dataset, gaussians, crop_gs_path=gs_path, load_iteration=30000)
     # gaussians.training_setup(opt)
     
     # load crop 3d mask and initialize new gaussian points
+    if gs_path is None:
+        gs_path = scene.gaussian_path
+        
     if remove_mask is None:
         dir = os.path.dirname(gs_path)
         remove_mask = os.path.join(dir, "remove_3d_mask.npy")
@@ -244,7 +282,7 @@ def training(
     inpaint_pcds = None
 
     gaussians.inpaint_setup(opt, remove_mask_np, inpaint_pcds)
-
+    
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -269,7 +307,9 @@ def training(
     for param in LPIPS.parameters():
         param.requires_grad = False
     LPIPS.cuda()
-    
+    # debug_new_xyz = []
+    freeze_gs_num = remove_mask_np[remove_mask_np==False].shape[0]
+    gaussians.stop_grad(opt, freeze_gs_num)
     for iteration in range(first_iter, opt.iterations + 1):        
 
         iter_start.record()
@@ -324,14 +364,18 @@ def training(
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
         ssim_loss = 1 - ssim(image, gt_image)
-        Ll1 = mask_l1_loss(image, gt_image, inpaint_mask)
+        # ssim_loss = 1 - ssim(image * inpaint_mask.float(), gt_image * inpaint_mask.float())
+        # Ll1 = mask_l1_loss(image, gt_image, inpaint_mask)
+        Ll1 = l1_loss(image, gt_image)
         # Ll1 = l1_loss(image, gt_image)
         # total_loss = Ll1  + normal_loss + dist_loss
         # total_loss = Ll1  + dist_loss
         total_loss = 0.8 * Ll1 + 0.2 * ssim_loss
         total_loss.backward()
+        xyz = gaussians.get_xyz
+        # print("frozen grad sum:", xyz.grad[:freeze_gs_num].abs().sum())
+        # print("trainable grad sum:", xyz.grad[freeze_gs_num:].abs().sum())
 
-       
         if iteration % 10 == 0:
             loss_dict = {
                 "Loss": f"{Ll1:.{4}f}",
@@ -350,13 +394,17 @@ def training(
 
                 if  iteration % 500 == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, freeze_num=freeze_gs_num)
                     # gaussians.reset_opacity()
+                    
+        gaussians.zero_frozen_grads(freeze_gs_num)
         gaussians.optimizer.step()
         gaussians.optimizer.zero_grad(set_to_none = True)
         if iteration in saving_iterations:
             print("\n[ITER {}] Saving Gaussians".format(iteration))         
             scene.save_inpaint(iteration)
+    # merge_new_xyz = np.concatenate(debug_new_xyz, axis=0)   
+
     print("\n[ITER {}] Saving Inpaint Gaussians".format(opt.iterations + 1))         
     # scene.save_inpaint(opt.iterations + 1)           
                 

@@ -60,7 +60,7 @@ if __name__ == "__main__":
     test_dir = os.path.join(args.model_path, 'test', "ours_{}".format(scene.loaded_iter))
     
     if args.save_dir is not None:
-        train_dir = os.path.join(args.save_dir, 'train')
+        train_dir = os.path.join(args.save_dir, 'bg_mesh')
         test_dir = os.path.join(args.save_dir, 'test')
     gaussExtractor = GaussianExtractor(gaussians, render, pipe, bg_color=bg_color)    
     

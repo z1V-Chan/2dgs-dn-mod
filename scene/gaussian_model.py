@@ -393,7 +393,6 @@ class GaussianModel:
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
@@ -411,10 +410,9 @@ class GaussianModel:
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
-
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 
-    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
+    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, freeze_num = None):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
@@ -426,6 +424,8 @@ class GaussianModel:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+        if freeze_num is not None:
+            prune_mask[:freeze_num] = False
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
@@ -433,7 +433,27 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
-        
+    
+    def zero_frozen_grads(self, freeze_num: int):
+        """
+        Zero out the gradients for the frozen part of Gaussian attributes.
+        freeze_num: number of Gaussians frozen in the front.
+        """
+        attrs = [
+            self._xyz,
+            self._features_dc,
+            self._features_rest,
+            self._opacity,
+            self._scaling,
+            self._rotation
+        ]
+
+        for attr in attrs:
+            if attr.grad is not None:
+                # attr shape: [N, C]
+                # We need to zero grad for first freeze_num rows
+                attr.grad[:freeze_num] = 0
+    
         
     def inpaint_setup(self, training_args, mask3d, inpaint_pcds):
 
@@ -555,6 +575,40 @@ class GaussianModel:
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+        ]
+
+        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
+                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale,
+                                                    lr_delay_mult=training_args.position_lr_delay_mult,
+                                                    max_steps=training_args.position_lr_max_steps)
+    def stop_grad(self, training_args, no_grad_part_length):
+        def set_requires_grad(tensor, requires_grad):
+            """Returns a new tensor with the specified requires_grad setting."""
+            return tensor.detach().clone().requires_grad_(requires_grad)
+        
+        
+        # Construct nn.Parameters with specified gradients
+        self._xyz = torch.nn.Parameter(torch.cat([set_requires_grad(self._xyz[:no_grad_part_length], False), set_requires_grad(self._xyz[no_grad_part_length:], True)]))
+        self._features_dc = torch.nn.Parameter(torch.cat([set_requires_grad(self._features_dc[:no_grad_part_length], False), set_requires_grad(self._features_dc[no_grad_part_length:], True)]))
+        self._features_rest = torch.nn.Parameter(torch.cat([set_requires_grad(self._features_rest[:no_grad_part_length], False), set_requires_grad(self._features_rest[no_grad_part_length:], True)]))
+        self._opacity = torch.nn.Parameter(torch.cat([set_requires_grad(self._opacity[:no_grad_part_length], False), set_requires_grad(self._opacity[no_grad_part_length:], True)]))
+        self._scaling = torch.nn.Parameter(torch.cat([set_requires_grad(self._scaling[:no_grad_part_length], False), set_requires_grad(self._scaling[no_grad_part_length:], True)]))
+        self._rotation = torch.nn.Parameter(torch.cat([set_requires_grad(self._rotation[:no_grad_part_length], False), set_requires_grad(self._rotation[no_grad_part_length:], True)]))
+        
+        
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.percent_dense = training_args.percent_dense
+        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+
+        l = [
+            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+            {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
+            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
+            {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
+            {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
