@@ -23,6 +23,7 @@ class GroundTruth(NamedTuple):
     alpha: torch.Tensor | None
     depth_cam: torch.Tensor | None
     depth_est: torch.Tensor | None
+    depth_conf: torch.Tensor | None = None
     inpaint_mask: torch.Tensor | None = None
     inpaint_depth: torch.Tensor | None = None
 
@@ -182,7 +183,9 @@ def load_image(
     image_pil = Image.open(image_path)
     depth_cam_pil = Image.open(depth_cam_path) if depth_cam_path is not None else None
     # depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
-    depth_est_np: np.ndarray = np.load(depth_est_path)["depth"] if depth_est_path is not None else None
+    depth_est_dict: dict[str, np.ndarray] = np.load(depth_est_path) if depth_est_path is not None else None
+    depth_est_np = depth_est_dict["depth"].astype(np.float32) if depth_est_dict is not None else None
+    depth_est_conf = depth_est_dict["conf"].astype(np.float32) if depth_est_dict is not None and "conf" in depth_est_dict else None
 
     # add for inpainting
     if inpaint_mask_path is not None:
@@ -220,7 +223,8 @@ def load_image(
     resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=1e3) if depth_cam_pil is not None else None
 
     # resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
-    resized_depth_est = torch.tensor(depth_est_np, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_np is not None else None
+    depth_est_tensor = torch.tensor(depth_est_np, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_np is not None else None
+    depth_est_conf_tensor = torch.tensor(depth_est_conf, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_conf is not None else None
     # resized_depth_est = torch.nn.functional.interpolate(
     #     resized_depth_est.unsqueeze(0),
     #     size=(resolution[1], resolution[0]),
@@ -238,7 +242,8 @@ def load_image(
         gt_image.clamp(0.0, 1.0),
         loaded_mask,
         resized_depth_cam,
-        resized_depth_est,
+        depth_est_tensor,
+        depth_est_conf_tensor,
         inpaint_mask_tensor,
         inpaint_depth_tensor,
     )

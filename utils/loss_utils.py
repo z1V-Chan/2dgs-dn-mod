@@ -3,19 +3,34 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+from typing import Literal
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 
-def l1_loss(network_output, gt):
-    return torch.abs((network_output - gt)).mean()
+def l1_log_loss(network_output: torch.Tensor, gt: torch.Tensor, weight: torch.Tensor):
+    diff = torch.abs(network_output - gt)
+    log_diff = torch.log(diff + 1.0)
+    weighted_log_diff = log_diff * weight
+    return weighted_log_diff.mean()
+
+
+def l1_loss(network_output, gt, reduction: Literal["mean", "sum", "none"] = "mean"):
+    if reduction == "sum":
+        return torch.abs((network_output - gt)).sum()
+    elif reduction == "mean":
+        return torch.abs((network_output - gt)).mean()
+    elif reduction == "none":
+        return torch.abs((network_output - gt))
+    else:
+        raise ValueError(f"Unknown reduction type '{reduction}' for l1_loss.")
 
 def mask_l1_loss(network_output, gt, mask):
     mask = mask.to(network_output.device).float()
