@@ -67,7 +67,7 @@ class PipelineParams(ParamGroup):
     def __init__(self, parser):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
-        self.depth_ratio = 1.0
+        self.depth_ratio = 0.5
         self.debug = False
         super().__init__(parser, "Pipeline Parameters")
 

@@ -12,7 +12,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import isotropic_loss, l1_loss, ssim, mask_l1_loss
+from utils.loss_utils import isotropic_loss, l1_loss, ssim, l1_loss_mask
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel

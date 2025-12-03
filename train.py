@@ -12,7 +12,14 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import isotropic_loss, l1_loss, l1_log_loss, ssim
+from utils.loss_utils import (
+    ssim,
+    isotropic_loss,
+    l1_loss,
+    l1_log_loss_weight,
+    l2_loss_weight,
+    l2_log_loss_weight,
+)
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -110,11 +117,12 @@ def training(
         # assert False
 
         rgb_delta = l1_loss(image, gt_image, reduction="none") # [3, H, W]
+        rgb_ssim = ssim(image, gt_image, size_average=False)  # [1, H, W]
         # print(rgb_delta.shape)
         # print(rgb_delta.sum(dim=0, keepdim=True).shape)
         # assert False
         Ll1 = rgb_delta.mean()
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - rgb_ssim.mean())
 
         depth_loss = torch.tensor(0.0, device="cuda")
 
@@ -139,6 +147,8 @@ def training(
                 pred_depth = gt.depth_est.to("cuda", non_blocking=True)
                 pred_depth_conf = gt.depth_conf.to("cuda", non_blocking=True) if gt.depth_conf is not None else None
 
+                weights = torch.ones_like(pred_depth, device="cuda")
+
                 h, w = pred_depth.shape[1:3]
                 H, W = rend_depth.shape[1:3]
                 rend_depth_pred_sized = torch.nn.functional.interpolate(
@@ -148,18 +158,15 @@ def training(
                     align_corners=True,
                 ).squeeze(0)
                 with torch.no_grad():
-                    pred_depth_rend_sized = torch.nn.functional.interpolate(
-                        pred_depth.unsqueeze(0),
-                        size=(H, W),
-                        mode="bicubic",
-                        align_corners=True,
-                    ).squeeze(0)
-                    rend_delta_pred_sized = torch.nn.functional.interpolate(
-                        rgb_delta.sum(dim=0, keepdim=True).unsqueeze(0),
+                    rgb_ssim_pred_sized = torch.nn.functional.interpolate(
+                        rgb_ssim.unsqueeze(0),
                         size=(h, w),
                         mode="bicubic",
                         align_corners=True,
-                    ).squeeze(0)
+                    ).squeeze(0).mean(dim=0, keepdim=True)
+                    weights *= torch.exp(rgb_ssim_pred_sized - 1)
+                    # if pred_depth_conf is not None:
+                    #     weights *= pred_depth_conf
 
                 mask = (rend_depth_pred_sized > 0.0) & (pred_depth > 0.0)
                 # print(mask.shape)
@@ -171,20 +178,26 @@ def training(
                     pred_depth_normalize = pred_depth[mask]
                     rend_depth_normalize = rend_depth_pred_sized[mask]
                 # depth_loss_heuristic = l1_loss(pred_depth_normalize, rend_depth_normalize)
-                depth_loss_heuristic = l1_log_loss(
-                    pred_depth_normalize,
+                depth_loss_heuristic = l2_log_loss_weight(
                     rend_depth_normalize,
-                    weight=(pred_depth_conf * rend_delta_pred_sized)[mask],
+                    pred_depth_normalize,
+                    weight=weights[mask],
                 )
-                depth_loss += 5 * dn_l1_weight * depth_loss_heuristic
+                depth_loss += 10 * dn_l1_weight * depth_loss_heuristic
 
                 with torch.no_grad():
-                    pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth_rend_sized).permute(2, 0, 1)
+                    pred_depth_normal = depth_to_normal(viewpoint_cam, pred_depth).permute(2, 0, 1)
 
                 # depth_normal_loss = l1_loss(pred_depth_normal, rend_depth_normal)
                 # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
                 # depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
-                render_normal_loss = (1 - (rend_normal * pred_depth_normal).sum(dim=0)).mean()
+                rend_normal_pred_sized = torch.nn.functional.interpolate(
+                    pred_depth.unsqueeze(0),
+                    size=(h, w),
+                    mode="bicubic",
+                    align_corners=True,
+                ).squeeze(0)
+                render_normal_loss = (1 - (rend_normal_pred_sized * pred_depth_normal).sum(dim=0)).mean()
                 depth_loss += dn_l1_weight * render_normal_loss
 
             # isotropic regularization

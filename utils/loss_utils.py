@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 
-def l1_log_loss(network_output: torch.Tensor, gt: torch.Tensor, weight: torch.Tensor):
+def l1_log_loss_weight(network_output: torch.Tensor, gt: torch.Tensor, weight: torch.Tensor):
     diff = torch.abs(network_output - gt)
     log_diff = torch.log(diff + 1.0)
     weighted_log_diff = log_diff * weight
@@ -32,13 +32,24 @@ def l1_loss(network_output, gt, reduction: Literal["mean", "sum", "none"] = "mea
     else:
         raise ValueError(f"Unknown reduction type '{reduction}' for l1_loss.")
 
-def mask_l1_loss(network_output, gt, mask):
+def l1_loss_mask(network_output, gt, mask):
     mask = mask.to(network_output.device).float()
     diff = torch.abs(network_output - gt) * mask
     return diff.mean()
 
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
+
+def l2_loss_weight(network_output: torch.Tensor, gt: torch.Tensor, weight: torch.Tensor):
+    diff = (network_output - gt) ** 2
+    weighted_diff = diff * weight
+    return weighted_diff.mean()
+
+def l2_log_loss_weight(network_output: torch.Tensor, gt: torch.Tensor, weight: torch.Tensor):
+    diff = (network_output - gt) ** 2
+    log_diff = torch.log(diff + 1.0)
+    weighted_log_diff = log_diff * weight
+    return weighted_log_diff.mean()
 
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
@@ -90,7 +101,7 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     if size_average:
         return ssim_map.mean()
     else:
-        return ssim_map.mean(1).mean(1).mean(1)
+        return ssim_map
 
 def isotropic_loss(scaling: torch.Tensor) -> torch.Tensor:
     """
