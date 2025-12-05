@@ -164,9 +164,9 @@ def training(
                         mode="bicubic",
                         align_corners=True,
                     ).squeeze(0).mean(dim=0, keepdim=True)
-                    weights *= torch.exp(rgb_ssim_pred_sized - 1)
-                    # if pred_depth_conf is not None:
-                    #     weights *= pred_depth_conf
+                    weights *= torch.exp((rgb_ssim_pred_sized - 1)/2)
+                    if pred_depth_conf is not None:
+                        weights *= pred_depth_conf
 
                 mask = (rend_depth_pred_sized > 0.0) & (pred_depth > 0.0)
                 # print(mask.shape)
