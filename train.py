@@ -164,9 +164,9 @@ def training(
                         mode="bicubic",
                         align_corners=True,
                     ).squeeze(0).mean(dim=0, keepdim=True)
-                    weights *= torch.exp((rgb_ssim_pred_sized - 1)/2)
-                    if pred_depth_conf is not None:
-                        weights *= pred_depth_conf
+                    weights *= torch.exp((rgb_ssim_pred_sized - 1) / 2)
+                    # if pred_depth_conf is not None:
+                    #     weights *= pred_depth_conf
 
                 mask = (rend_depth_pred_sized > 0.0) & (pred_depth > 0.0)
                 # print(mask.shape)
@@ -192,7 +192,7 @@ def training(
                 # render_normal_loss = l1_loss(pred_depth_normal, render_normal)
                 # depth_normal_loss = (1 - (surf_normal * pred_depth_normal).sum(dim=0)).mean()
                 rend_normal_pred_sized = torch.nn.functional.interpolate(
-                    pred_depth.unsqueeze(0),
+                    rend_normal.unsqueeze(0),
                     size=(h, w),
                     mode="bicubic",
                     align_corners=True,
