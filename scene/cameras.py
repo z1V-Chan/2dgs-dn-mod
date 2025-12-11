@@ -121,17 +121,11 @@ class Camera(nn.Module):
         If `release` is True, release the data after returning it.
         """
         if self._gt is None:
-            original_image, gt_alpha_mask, sensor_depth, pred_depth = load_image(
+            gt = load_image(
                 self.resolution_original,
                 self.__original_image,
                 self.__sensor_depth,
                 self.__pred_depth,
-            )
-            gt = GroundTruth(
-                original_image,
-                gt_alpha_mask,
-                sensor_depth,
-                pred_depth,
             )
         else: 
             gt = self._gt
