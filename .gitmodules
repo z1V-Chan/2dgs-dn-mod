@@ -4,5 +4,4 @@
 	ignore = all
 [submodule "submodules/simple-knn"]
 	path = submodules/simple-knn
-	url = https://gitlab.inria.fr/bkerbl/simple-knn.git
-	ignore = all
+	url = https://github.com/z1V-Chan/simple-knn-clone.git

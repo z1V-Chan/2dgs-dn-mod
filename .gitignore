@@ -13,4 +13,3 @@ eval
 *.npz
 **/tmp
 **/*.so
-submodules
