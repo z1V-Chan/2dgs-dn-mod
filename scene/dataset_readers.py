@@ -203,7 +203,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+def readColmapSceneInfo(path, images, eval, llffhold=8, split_yml_name="split.yml"):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.bin")
@@ -229,7 +229,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        split_file = os.path.join(path, "split.yml")
+        split_file = os.path.join(path, split_yml_name)
         if os.path.exists(split_file):
             print("Reading split file")
             with open(split_file, "r") as f:

@@ -59,6 +59,8 @@ class ModelParams(ParamGroup):
         self.eval = False
         self.preload = True
         self.depth_scale = 1e3
+
+        self.split_yml_name = "split.yml"
         self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature']
         super().__init__(parser, "Loading Parameters", sentinel)
 
