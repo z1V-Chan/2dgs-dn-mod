@@ -96,7 +96,7 @@ class GaussianExtractor(object):
         # self.alphamaps = []
         self.rgbmaps = []
         self.normals = []
-        # self.depth_normals = []
+        self.depth_normals = []
         self.gt_depth_normals = []
         self.viewpoint_stack = []
 
@@ -109,21 +109,25 @@ class GaussianExtractor(object):
         self.viewpoint_stack: list[Camera] = viewpoint_stack
         for i, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="reconstruct radiance fields"):
             render_pkg = self.render(viewpoint_cam, self.gaussians)
-            # gt_depth = viewpoint_cam.gt().depth_cam.cuda(non_blocking=True)
             rgb = render_pkg['render']
             alpha = render_pkg['render_alpha']
             normal = torch.nn.functional.normalize(render_pkg['render_normal'], dim=0)
             depth = render_pkg['render_depth']
             depth_normal = render_pkg['surf_normal']
-            # gt_depth_normal = depth_to_normal(viewpoint_cam, gt_depth).permute(2, 0, 1)
+            gt_depth_normal = None
+
+            gt_depth = viewpoint_cam.gt().depth_cam
+            if gt_depth is not None:
+                gt_depth = gt_depth.cuda(non_blocking=True)
+                gt_depth_normal = depth_to_normal(viewpoint_cam, gt_depth).permute(2, 0, 1)
 
             self.rgbmaps.append(rgb.cpu())
             self.depthmaps.append(depth.cpu())
 
             # self.alphamaps.append(alpha.cpu())
             self.normals.append(normal.cpu())
-            # self.depth_normals.append(depth_normal.cpu())
-            # self.gt_depth_normals.append(gt_depth_normal.cpu())
+            self.depth_normals.append(depth_normal.cpu())
+            self.gt_depth_normals.append(gt_depth_normal.cpu() if gt_depth_normal is not None else None)
 
         # self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
         # self.depthmaps = torch.stack(self.depthmaps, dim=0)
@@ -288,29 +292,32 @@ class GaussianExtractor(object):
         return mesh
 
     @torch.no_grad()
-    def export_image(self, path):
+    def export_image(self, path, depth_scale=1e3):
         render_path = os.path.join(path, "renders")
-        gts_path = os.path.join(path, "gt")
-        gts_depth_path = os.path.join(path, "gt_depth")
+        # gts_path = os.path.join(path, "gt")
+        # gts_depth_path = os.path.join(path, "gt_depth")
         render_depth_path = os.path.join(path, "renders_depth")
         render_normal_path = os.path.join(path, "renders_normal")
-        gts_depth_normal_path = os.path.join(path, "gt_depth_normal")
-        os.makedirs(gts_path, exist_ok=True)
-        os.makedirs(gts_depth_path, exist_ok=True)
+        render_depth_normal_path = os.path.join(path, "renders_depth_normal")
+        # gts_depth_normal_path = os.path.join(path, "gt_depth_normal")
+        # os.makedirs(gts_path, exist_ok=True)
+        # os.makedirs(gts_depth_path, exist_ok=True)
         os.makedirs(render_path, exist_ok=True)
         os.makedirs(render_depth_path, exist_ok=True)
         os.makedirs(render_normal_path, exist_ok=True)
-        os.makedirs(gts_depth_normal_path, exist_ok=True)
+        os.makedirs(render_depth_normal_path, exist_ok=True)
+        # os.makedirs(gts_depth_normal_path, exist_ok=True)
         for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="export images"):
-            gt = viewpoint_cam.gt()
-            save_img_u8(gt.image[0:3, :, :].permute(1,2,0).numpy(), os.path.join(gts_path, viewpoint_cam.image_name + ".png"))
+            # gt = viewpoint_cam.gt()
+            # save_img_u8(gt.image[0:3, :, :].permute(1,2,0).numpy(), os.path.join(gts_path, viewpoint_cam.image_name + ".png"))
             save_img_u8(self.rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, viewpoint_cam.image_name + ".png"))
             # save_img_u16(gt.depth_cam.squeeze().numpy() * 1e3, os.path.join(gts_depth_path, viewpoint_cam.image_name + ".png"))
-            save_img_u16(self.depthmaps[idx].squeeze().cpu().numpy() * 1e3, os.path.join(render_depth_path, viewpoint_cam.image_name + ".png"))
+            save_img_u16(self.depthmaps[idx].squeeze().cpu().numpy() * depth_scale, os.path.join(render_depth_path, viewpoint_cam.image_name + ".png"))
             # save_img_f32(self.depthmaps[idx][0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
             save_img_u8(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(render_normal_path, viewpoint_cam.image_name + ".png"))
-            # save_img_u8(self.depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'depth_normal_{0:05d}'.format(idx) + ".png"))
-            # save_img_u8(self.gt_depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(gts_depth_normal_path, viewpoint_cam.image_name + ".png"))
+            save_img_u8(self.depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(render_depth_normal_path, viewpoint_cam.image_name + ".png"))
+            # if self.gt_depth_normals[idx] is not None:
+            #     save_img_u8(self.gt_depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(gts_depth_normal_path, viewpoint_cam.image_name + ".png"))
     
     @torch.no_grad()
     def export_normalized_depth(self, path):

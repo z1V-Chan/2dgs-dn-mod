@@ -39,6 +39,9 @@ class ParamGroup:
 
     def extract(self, args):
         group = GroupParams()
+        for key, value in vars(self).items():
+            attr_name = key[1:] if key.startswith("_") else key
+            setattr(group, attr_name, value)
         for arg in vars(args).items():
             if arg[0] in vars(self) or ("_" + arg[0]) in vars(self):
                 setattr(group, arg[0], arg[1])
@@ -55,6 +58,7 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.preload = True
+        self.depth_scale = 1e3
         self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature']
         super().__init__(parser, "Loading Parameters", sentinel)
 

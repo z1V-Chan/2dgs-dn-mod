@@ -18,6 +18,61 @@ from utils.general_utils import PILtoTorch
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 import os
 
+
+def _resolve_data_path(base_path: str | None, suffixes: tuple[str, ...]) -> str | None:
+    if base_path is None:
+        return None
+
+    _, ext = os.path.splitext(base_path)
+    if ext:
+        return base_path
+
+    for suffix in suffixes:
+        candidate = base_path + suffix
+        if os.path.exists(candidate):
+            return candidate
+
+    return base_path + suffixes[0]
+
+
+def resolve_camera_data_paths(
+    image_path: str,
+    depth_cam_path: str | None = None,
+    depth_est_path: str | None = None,
+    inpaint_mask_path: str | None = None,
+    inpaint_depth_path: str | None = None,
+) -> dict[str, str | None]:
+    return {
+        "image": image_path,
+        "depth_cam": _resolve_data_path(depth_cam_path, (".png",)),
+        "depth_est": _resolve_data_path(depth_est_path, (".npz", ".png")),
+        "inpaint_mask": _resolve_data_path(inpaint_mask_path, (".png",)),
+        "inpaint_depth": _resolve_data_path(inpaint_depth_path, (".pt",)),
+    }
+
+
+def get_missing_camera_data_paths(
+    image_path: str,
+    depth_cam_path: str | None = None,
+    depth_est_path: str | None = None,
+    inpaint_mask_path: str | None = None,
+    inpaint_depth_path: str | None = None,
+) -> list[tuple[str, str]]:
+    resolved_paths = resolve_camera_data_paths(
+        image_path=image_path,
+        depth_cam_path=depth_cam_path,
+        depth_est_path=depth_est_path,
+        inpaint_mask_path=inpaint_mask_path,
+        inpaint_depth_path=inpaint_depth_path,
+    )
+
+    required_modalities = ("image", "depth_cam", "depth_est", "inpaint_mask")
+    return [
+        (name, path)
+        for name in required_modalities
+        if (path := resolved_paths[name]) is not None and not os.path.exists(path)
+    ]
+
 class GroundTruth(NamedTuple):
     image: torch.Tensor
     alpha: torch.Tensor | None
@@ -48,6 +103,7 @@ class Camera(nn.Module):
         uid,
         trans=np.array([0.0, 0.0, 0.0]),
         scale=1.0,
+        depth_scale=1e3,
         data_device="cuda",
     ):
         super(Camera, self).__init__()
@@ -68,13 +124,21 @@ class Camera(nn.Module):
         self.resolution_original = resolution
         # self.data_device = torch.device("cpu")
 
-        self.__original_image = image_path
+        resolved_paths = resolve_camera_data_paths(
+            image_path=image_path,
+            depth_cam_path=depth_cam_path,
+            depth_est_path=depth_est_path,
+            inpaint_mask_path=inpaint_mask_path,
+            inpaint_depth_path=inpaint_depth_path,
+        )
+
+        self.__original_image = resolved_paths["image"]
         # move to device at dataloader to reduce VRAM requirement
-        self.__sensor_depth = depth_cam_path + ".png" if depth_cam_path is not None else None
-        self.__pred_depth = depth_est_path + ".npz" if depth_est_path is not None else None
-        self.__inpaint_mask = inpaint_mask_path + ".png" if inpaint_mask_path is not None else None
+        self.__sensor_depth = resolved_paths["depth_cam"]
+        self.__pred_depth = resolved_paths["depth_est"]
+        self.__inpaint_mask = resolved_paths["inpaint_mask"]
         # self.__inpaint_depth = inpaint_depth_path + ".png" if inpaint_depth_path is not None else None
-        self.__inpaint_depth = inpaint_depth_path + ".pt" if inpaint_depth_path is not None else None
+        self.__inpaint_depth = resolved_paths["inpaint_depth"]
         
         # self.image_width = resolution[0]
         # self.image_height = resolution[1]
@@ -87,6 +151,7 @@ class Camera(nn.Module):
                 self.__pred_depth,
                 self.__inpaint_mask,
                 self.__inpaint_depth,
+                depth_scale=depth_scale,
             )
             if Camera.preload
             else None
@@ -97,6 +162,7 @@ class Camera(nn.Module):
 
         self.trans = trans
         self.scale = scale
+        self.depth_scale = depth_scale
 
         self.world_view_transform = (
             torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
@@ -126,6 +192,9 @@ class Camera(nn.Module):
                 self.__original_image,
                 self.__sensor_depth,
                 self.__pred_depth,
+                self.__inpaint_mask,
+                self.__inpaint_depth,
+                depth_scale=self.depth_scale,
             )
         else: 
             gt = self._gt
@@ -168,6 +237,7 @@ def load_image(
     depth_est_path: str | None = None,
     inpaint_mask_path: str | None = None,
     inpaint_depth_path: str | None = None,
+    depth_scale: float = 1e3,
 ):
     """
     Load the image and depth maps from the FreeImage objects
@@ -176,10 +246,19 @@ def load_image(
     """
     image_pil = Image.open(image_path)
     depth_cam_pil = Image.open(depth_cam_path) if depth_cam_path is not None else None
-    # depth_est_pil = Image.open(depth_est_path) if depth_est_path is not None else None
-    depth_est_dict: dict[str, np.ndarray] = np.load(depth_est_path) if depth_est_path is not None else None
-    depth_est_np = depth_est_dict["depth"].astype(np.float32) if depth_est_dict is not None else None
-    depth_est_conf = depth_est_dict["conf"].astype(np.float32) if depth_est_dict is not None and "conf" in depth_est_dict else None
+    depth_est_pil = None
+    depth_est_dict: dict[str, np.ndarray] | None = None
+    depth_est_np = None
+    depth_est_conf = None
+    if depth_est_path is not None:
+        if depth_est_path.endswith(".npz"):
+            depth_est_dict = np.load(depth_est_path)
+            depth_est_np = depth_est_dict["depth"].astype(np.float32)
+            if "conf" in depth_est_dict:
+                depth_est_conf = depth_est_dict["conf"].astype(np.float32)
+        else:
+            depth_est_pil = Image.open(depth_est_path)
+            depth_est_np = np.array(depth_est_pil, dtype=np.float32) / depth_scale
 
     # add for inpainting
     if inpaint_mask_path is not None:
@@ -214,7 +293,7 @@ def load_image(
         loaded_mask = None
         gt_image = resized_image_rgb
 
-    resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=1e3) if depth_cam_pil is not None else None
+    resized_depth_cam = PILtoTorch(depth_cam_pil, resolution, scale=depth_scale) if depth_cam_pil is not None else None
 
     # resized_depth_est = PILtoTorch(depth_est_pil, resolution, scale=1e3) if depth_est_pil is not None else None
     depth_est_tensor = torch.tensor(depth_est_np, dtype=torch.float32, device="cpu").unsqueeze(0) if depth_est_np is not None else None
@@ -229,8 +308,10 @@ def load_image(
     image_pil.close()
     if depth_cam_pil is not None:
         depth_cam_pil.close()
-    # if depth_est_pil is not None:
-    #     depth_est_pil.close()
+    if depth_est_pil is not None:
+        depth_est_pil.close()
+    if depth_est_dict is not None:
+        depth_est_dict.close()
 
     return GroundTruth(
         gt_image.clamp(0.0, 1.0),

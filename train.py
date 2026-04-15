@@ -13,6 +13,7 @@ import os
 import torch
 from random import randint
 from utils.loss_utils import (
+    l2_loss,
     ssim,
     isotropic_loss,
     l1_loss,
@@ -117,7 +118,7 @@ def training(
         # assert False
 
         rgb_delta = l1_loss(image, gt_image, reduction="none") # [3, H, W]
-        rgb_ssim = ssim(image, gt_image, size_average=False)  # [1, H, W]
+        rgb_ssim = ssim(image, gt_image, size_average=False)  # [3, H, W]
         # print(rgb_delta.shape)
         # print(rgb_delta.sum(dim=0, keepdim=True).shape)
         # assert False
@@ -145,7 +146,7 @@ def training(
             if gt.depth_est is not None and iteration > opt.depth_from_iter + 2000:
                 dn_l1_weight = get_expon_lr_func(opt.dn_l1_weight_init, opt.dn_l1_weight_final, max_steps=opt.iterations)(iteration)
                 pred_depth = gt.depth_est.to("cuda", non_blocking=True)
-                pred_depth_conf = gt.depth_conf.to("cuda", non_blocking=True) if gt.depth_conf is not None else None
+                # pred_depth_conf = gt.depth_conf.to("cuda", non_blocking=True) if gt.depth_conf is not None else None
 
                 weights = torch.ones_like(pred_depth, device="cuda")
 
@@ -389,7 +390,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6008)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 10_000, 15_000, 20_000, 25_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 10_000, 20_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)

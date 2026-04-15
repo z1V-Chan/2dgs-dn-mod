@@ -24,6 +24,7 @@ from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 
 import yaml
+from scene.cameras import get_missing_camera_data_paths
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -46,6 +47,34 @@ class SceneInfo(NamedTuple):
     test_cameras: list
     nerf_normalization: dict
     ply_path: str
+
+
+def filter_missing_modalities(cam_infos: list[CameraInfo], split_name: str) -> list[CameraInfo]:
+    filtered_cam_infos: list[CameraInfo] = []
+    skipped = 0
+
+    for cam_info in cam_infos:
+        missing_paths = get_missing_camera_data_paths(
+            image_path=cam_info.image_path,
+            depth_cam_path=cam_info.depth_cam_path,
+            depth_est_path=cam_info.depth_est_path,
+            inpaint_mask_path=cam_info.inpaint_mask_path,
+            inpaint_depth_path=cam_info.inpaint_depth_path,
+        )
+        if missing_paths:
+            skipped += 1
+            missing_desc = ", ".join(f"{name}={path}" for name, path in missing_paths)
+            print(
+                f"[ WARN ] Skipping {split_name} camera {cam_info.image_name} because required files are missing: {missing_desc}"
+            )
+            continue
+
+        filtered_cam_infos.append(cam_info)
+
+    if skipped:
+        print(f"[ INFO ] Skipped {skipped} {split_name} camera(s) with missing required files.")
+
+    return filtered_cam_infos
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -174,7 +203,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=20):
+def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.bin")
@@ -217,6 +246,12 @@ def readColmapSceneInfo(path, images, eval, llffhold=20):
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
+
+    train_cam_infos = filter_missing_modalities(train_cam_infos, "train")
+    test_cam_infos = filter_missing_modalities(test_cam_infos, "test")
+
+    if not train_cam_infos:
+        raise RuntimeError("No training cameras remain after filtering cameras with missing required files.")
 
     print(f"Train cameras: {len(train_cam_infos)}, Test cameras: {len(test_cam_infos)}")
 
